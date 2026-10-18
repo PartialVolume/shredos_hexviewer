@@ -39,7 +39,8 @@ sudo dnf install -y \
 make
 ```
 ## Main Screen
-<img width="1203" height="451" alt="Screenshot_20261016_232446" src="https://github.com/user-attachments/assets/6a0fddf3-9760-4605-9cd5-7403b9a94209" />
+<img width="994" height="434" alt="Screenshot_20261018_214843" src="https://github.com/user-attachments/assets/bbea85e6-5660-4e14-b7f9-b803a587fe00" />
+
 
 ## Application Layout & Navigation
 The interface is divided into three primary regions:
@@ -62,7 +63,8 @@ The interface is divided into three primary regions:
 | q / Q | Quit application
 
 ## Search Functionality (s)
-<img width="1205" height="452" alt="Screenshot_20261016_232826" src="https://github.com/user-attachments/assets/2b181cf6-18be-4f64-a5ff-cb771c142a0e" />
+<img width="994" height="434" alt="Screenshot_20261018_215014" src="https://github.com/user-attachments/assets/045b7af7-4c16-4469-ae24-1502ab0d7810" />
+
 
 The search engine allows scanning raw disk sectors using both targeted patterns and flexible sampling scopes.
 
@@ -82,8 +84,9 @@ When prompted for a search scope:
 - <100% (1000-Chunk Scatter Scan): Divides the target range into 1,000 equal segments and scans them in pseudo-random order. This allows sampling terabytes of drive space in seconds to detect residual data across the disk surface.
 - Custom Units: Supports ranges like 50%, 500M, 8GB, or 2TB.
 
-## Goto - percentage or offset
-<img width="1203" height="453" alt="Screenshot_20261016_233127" src="https://github.com/user-attachments/assets/d4c07b7f-6abc-49c8-af45-2bfcdf813ea4" />
+## Goto - by disc percentage, byte offset or block (LBA)
+<img width="994" height="434" alt="Screenshot_20261018_215111" src="https://github.com/user-attachments/assets/3b4035b4-9104-4a01-a546-1855dc7632b6" />
+
 
 ## Entropy Theory & Advanced Checks (e)
 
@@ -91,6 +94,9 @@ When prompted for a search scope:
 Information entropy measures the degree of randomness or unpredictability in a set of data. shredos_hexviewer calculates Shannon Entropy ($H$) using the standard formula:
 
 <img width="304" height="92" alt="Screenshot_20261018_205619" src="https://github.com/user-attachments/assets/0705cfe0-1f83-4dce-a3f9-22e582137b31" />
+
+<img width="994" height="434" alt="Screenshot_20261018_215529" src="https://github.com/user-attachments/assets/5eff9456-5193-490c-8824-859f1cd30a53" />
+
 
 ### What the Shannon score means:
 Represents the probability (relative frequency) of byte value occurring within the sampled block or drive scope.
@@ -108,7 +114,8 @@ Represents the probability (relative frequency) of byte value occurring within t
 ⚠️ **Critical Caution on Entropy Scans:**
 Shannon entropy (whether global or block-by-block) measures statistical randomness, not semantics. An entropy scan will not flag a small snippet of plain text (such as "How now brown cow") if it resides inside a 512-byte block alongside random or high-entropy data. Because the surrounding bytes maintain a high-entropy distribution, the block's overall score remains high, masking the text. To locate human-readable strings hidden amongst random or wiped data, always use the Multi-Word Phrase Search or ASCII Pattern Search instead.
 
-<img width="1203" height="453" alt="Screenshot_20261016_233342" src="https://github.com/user-attachments/assets/b9572fa4-9a1a-460b-9a70-70a1f8db3f21" />
+<img width="994" height="434" alt="Screenshot_20261018_215722" src="https://github.com/user-attachments/assets/834f5ec2-0eed-454e-8e44-6c24f68fb696" />
+
 
 ## Partition and Filesystem Signature Detection
 When shredos_hexviewer initializes and discovers storage devices, it performs an automatic scan of the initial sectors to identify partition tables, boot records, and filesystems. This detected signature is dynamically displayed in the top border of the hex view pane (for example, [GPT], [MBR + NTFS], or [ext2/3/4]).
@@ -130,8 +137,8 @@ The underlying signature detection mechanism relies on specific low-level byte p
   - ISO9660: Performs a targeted read at byte offset 32,768 (the 32KB mark) to locate optical disc "CD001" formatting.
 
   - Raw / Unknown: If no known partition table, boot sector signature, or filesystem magic header is matched, it defaults to labeling the storage as Raw or Raw / Unknown.
+<img width="994" height="434" alt="Screenshot_20261018_215916" src="https://github.com/user-attachments/assets/489494ab-bf19-4178-97a7-3d0335073fba" />
 
-<img width="1203" height="453" alt="Screenshot_20261016_233439" src="https://github.com/user-attachments/assets/fd6a4a41-2aba-409c-9481-aad45c59ee55" />
 
 
 
