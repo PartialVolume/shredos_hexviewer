@@ -55,6 +55,7 @@ typedef struct {
 void init_ncurses_ui(void);
 void get_model_and_serial(const char *dev_name, char *dest, size_t max_len);
 void detect_drive_signature(drive_info_t *drive);
+int check_drives_changed(drive_info_t drives[], int drive_count);
 int get_drive_list(drive_info_t drives[], int max_drives);
 void close_drives(drive_info_t drives[], int count);
 void render_hex_view(WINDOW *win, drive_info_t *drive);
@@ -65,6 +66,7 @@ off_t handle_random_search(drive_info_t *drive, int bytes_per_row);
 off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t search_type, search_pattern_element_t *hex_pattern, unsigned char *ascii_pattern, int pat_len, unsigned long long target_bytes, int is_full_scan, off_t start_offset, int is_find_next);
 void handle_entropy_menu(drive_info_t *drive, int bytes_per_row);
 void handle_entropy_check(drive_info_t *drive, int bytes_per_row);
+void handle_single_block_entropy(drive_info_t *drive, int bytes_per_row);
 off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, double threshold, unsigned long long target_bytes, int is_full_scan, off_t start_offset, int is_find_next);
 off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min_word_size, unsigned long long target_bytes, int is_full_scan, off_t start_offset, int is_find_next);
 void show_message_popup(const char *title, const char *msg);
@@ -101,6 +103,9 @@ int main(int argc, char *argv[]) {
     // Initial drive discovery
     drive_count = get_drive_list(drives, 64);
 
+    struct timespec last_hotplug_check;
+    clock_gettime(CLOCK_MONOTONIC, &last_hotplug_check);
+
     // Layout configuration
     int height = LINES;
     int width = COLS;
@@ -119,47 +124,56 @@ int main(int argc, char *argv[]) {
     keypad(win_left, TRUE);
     keypad(win_right, TRUE);
 
-    // Set 250ms non-blocking timeout for wgetch to enable auto-refresh without CPU spinning
+    // Set 250ms non-blocking timeout for wgetch to enable responsive UI without CPU spinning
     wtimeout(win_left, 250);
 
     int running = 1;
     while (running) {
-        // --- Automatic Hot-Plug / Drive Refresh Check (Preserving Offset & Selection) ---
-        char selected_name[64] = "";
-        off_t saved_offset = 0;
-        if (drive_count > 0 && selected_drive < drive_count) {
-            size_t name_len = strlen(drives[selected_drive].name);
-            if (name_len >= sizeof(selected_name)) name_len = sizeof(selected_name) - 1;
-            memcpy(selected_name, drives[selected_drive].name, name_len);
-            selected_name[name_len] = '\0';
-            saved_offset = drives[selected_drive].offset;
-        }
+        // --- Throttled Hot-Plug Check (Runs every 1 second max, only if drives changed) ---
+        struct timespec now_hp;
+        clock_gettime(CLOCK_MONOTONIC, &now_hp);
+        long hp_elapsed_ms = (now_hp.tv_sec - last_hotplug_check.tv_sec) * 1000 + (now_hp.tv_nsec - last_hotplug_check.tv_nsec) / 1000000;
 
-        close_drives(drives, drive_count);
-        drive_count = get_drive_list(drives, 64);
+        if (hp_elapsed_ms >= 1000) {
+            last_hotplug_check = now_hp;
+            if (check_drives_changed(drives, drive_count)) {
+                char selected_name[64] = "";
+                off_t saved_offset = 0;
+                if (drive_count > 0 && selected_drive < drive_count) {
+                    size_t name_len = strlen(drives[selected_drive].name);
+                    if (name_len >= sizeof(selected_name)) name_len = sizeof(selected_name) - 1;
+                    memcpy(selected_name, drives[selected_drive].name, name_len);
+                    selected_name[name_len] = '\0';
+                    saved_offset = drives[selected_drive].offset;
+                }
 
-        int found_sel = 0;
-        if (strlen(selected_name) > 0) {
-            for (int i = 0; i < drive_count; i++) {
-                if (strcmp(drives[i].name, selected_name) == 0) {
-                    selected_drive = i;
-                    drives[i].offset = saved_offset; // Restore position across auto-refresh
-                    found_sel = 1;
-                    break;
+                close_drives(drives, drive_count);
+                drive_count = get_drive_list(drives, 64);
+
+                int found_sel = 0;
+                if (strlen(selected_name) > 0) {
+                    for (int i = 0; i < drive_count; i++) {
+                        if (strcmp(drives[i].name, selected_name) == 0) {
+                            selected_drive = i;
+                            drives[i].offset = saved_offset; // Restore position across auto-refresh
+                            found_sel = 1;
+                            break;
+                        }
+                    }
+                }
+                if (!found_sel) {
+                    selected_drive = 0;
+                    scroll_offset = 0;
+                }
+
+                // Ensure selected index is within bounds
+                if (drive_count > 0 && selected_drive >= drive_count) {
+                    selected_drive = drive_count - 1;
+                }
+                if (selected_drive < 0) {
+                    selected_drive = 0;
                 }
             }
-        }
-        if (!found_sel) {
-            selected_drive = 0;
-            scroll_offset = 0;
-        }
-
-        // Ensure selected index is within bounds
-        if (drive_count > 0 && selected_drive >= drive_count) {
-            selected_drive = drive_count - 1;
-        }
-        if (selected_drive < 0) {
-            selected_drive = 0;
         }
 
         // --- Render Top Title Box ---
@@ -396,7 +410,41 @@ int main(int argc, char *argv[]) {
 
             case 'r':
             case 'R':
-                break;
+                // Manual reload forced
+            {
+                char selected_name[64] = "";
+                off_t saved_offset = 0;
+                if (drive_count > 0 && selected_drive < drive_count) {
+                    size_t name_len = strlen(drives[selected_drive].name);
+                    if (name_len >= sizeof(selected_name)) name_len = sizeof(selected_name) - 1;
+                    memcpy(selected_name, drives[selected_drive].name, name_len);
+                    selected_name[name_len] = '\0';
+                    saved_offset = drives[selected_drive].offset;
+                }
+
+                close_drives(drives, drive_count);
+                drive_count = get_drive_list(drives, 64);
+
+                int found_sel = 0;
+                if (strlen(selected_name) > 0) {
+                    for (int i = 0; i < drive_count; i++) {
+                        if (strcmp(drives[i].name, selected_name) == 0) {
+                            selected_drive = i;
+                            drives[i].offset = saved_offset;
+                            found_sel = 1;
+                            break;
+                        }
+                    }
+                }
+                if (!found_sel) {
+                    selected_drive = 0;
+                    scroll_offset = 0;
+                }
+                if (drive_count > 0 && selected_drive >= drive_count) {
+                    selected_drive = drive_count - 1;
+                }
+            }
+            break;
 
             case 'q':
             case 'Q':
@@ -542,6 +590,47 @@ void detect_drive_signature(drive_info_t *drive) {
     snprintf(drive->signature, sizeof(drive->signature), "Raw / Unknown");
 }
 
+int check_drives_changed(drive_info_t drives[], int drive_count) {
+    DIR *dir = opendir("/sys/block");
+    if (!dir) return 0;
+
+    char sys_names[64][64];
+    int sys_count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && sys_count < 64) {
+        if (entry->d_name[0] == '.') continue;
+        if (strncmp(entry->d_name, "loop", 4) == 0) continue;
+        if (strncmp(entry->d_name, "ram", 3) == 0) continue;
+        if (strncmp(entry->d_name, "sr", 2) == 0) continue;
+
+        char path[MAX_PATH];
+        snprintf(path, sizeof(path), "/dev/%s", entry->d_name);
+        struct stat st;
+        if (stat(path, &st) < 0) continue;
+
+        size_t len = strlen(entry->d_name);
+        if (len >= sizeof(sys_names[sys_count])) len = sizeof(sys_names[sys_count]) - 1;
+        memcpy(sys_names[sys_count], entry->d_name, len);
+        sys_names[sys_count][len] = '\0';
+        sys_count++;
+    }
+    closedir(dir);
+
+    if (sys_count != drive_count) return 1;
+
+    for (int i = 0; i < drive_count; i++) {
+        int found = 0;
+        for (int j = 0; j < sys_count; j++) {
+            if (strcmp(drives[i].name, sys_names[j]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) return 1;
+    }
+    return 0;
+}
+
 int get_drive_list(drive_info_t drives[], int max_drives) {
     DIR *dir = opendir("/sys/block");
     if (!dir) return 0;
@@ -646,8 +735,9 @@ void show_message_popup(const char *title, const char *msg) {
 }
 
 off_t handle_goto_popup(drive_info_t *drive, int bytes_per_row) {
-    int p_height = 9;
-    int p_width = 54;
+    (void)bytes_per_row;
+    int p_height = 10;
+    int p_width = 56;
     int starty = (LINES - p_height) / 2;
     int startx = (COLS - p_width) / 2;
 
@@ -662,7 +752,8 @@ off_t handle_goto_popup(drive_info_t *drive, int bytes_per_row) {
     mvwprintw(pop, 2, 3, "Select Goto Method:");
     mvwprintw(pop, 4, 5, "[P] Percentage of disk (0-100%%)");
     mvwprintw(pop, 5, 5, "[B] Offset bytes (Decimal / Hex)");
-    mvwprintw(pop, 6, 5, "[Esc] Cancel");
+    mvwprintw(pop, 6, 5, "[L] Block number (LBA / 512-byte)");
+    mvwprintw(pop, 7, 5, "[Esc] Cancel");
     wrefresh(pop);
 
     int ch = wgetch(pop);
@@ -715,6 +806,31 @@ off_t handle_goto_popup(drive_info_t *drive, int bytes_per_row) {
         }
         new_offset = (off_t)val;
     }
+    else if (ch == 'l' || ch == 'L') {
+        wclear(pop);
+        box(pop, 0, 0);
+        wattron(pop, COLOR_PAIR(CP_TITLE) | A_BOLD);
+        mvwprintw(pop, 0, 2, " Go To: Block Number (LBA) ");
+        wattroff(pop, COLOR_PAIR(CP_TITLE) | A_BOLD);
+
+        char input_buf[64] = {0};
+        mvwprintw(pop, 3, 3, "Enter 512-byte block / LBA number: ");
+        wrefresh(pop);
+
+        echo();
+        curs_set(1);
+        wgetnstr(pop, input_buf, 63);
+        noecho();
+        curs_set(0);
+
+        unsigned long long block_num = 0;
+        if (strncmp(input_buf, "0x", 2) == 0 || strncmp(input_buf, "0X", 2) == 0) {
+            sscanf(input_buf, "%llx", &block_num);
+        } else {
+            sscanf(input_buf, "%llu", &block_num);
+        }
+        new_offset = (off_t)(block_num * 512);
+    }
 
     delwin(pop);
     touchwin(stdscr);
@@ -722,7 +838,6 @@ off_t handle_goto_popup(drive_info_t *drive, int bytes_per_row) {
     if (new_offset > drive->size) {
         new_offset = drive->size;
     }
-    new_offset = (new_offset / bytes_per_row) * bytes_per_row;
     if (new_offset < 0) {
         new_offset = 0;
     }
@@ -1321,7 +1436,7 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
             return execute_search(drive, bytes_per_row, search_type, hex_pattern, ascii_pattern, pat_len, target_bytes, is_full_scan, found_offset + 1, 1);
         }
 
-        return (found_offset / bytes_per_row) * bytes_per_row;
+        return found_offset;
     } else {
         show_message_popup("Search Result", "No matching pattern found in searched scope.");
         return drive->offset;
@@ -1330,7 +1445,7 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
 
 void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
     (void)bytes_per_row;
-    int m_height = 11;
+    int m_height = 12;
     int m_width = 62;
     int starty = (LINES - m_height) / 2;
     int startx = (COLS - m_width) / 2;
@@ -1347,7 +1462,8 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
     mvwprintw(menu_win, 4, 5, "[1] Global Shannon Entropy Check (Whole Scope)");
     mvwprintw(menu_win, 5, 5, "[2] Shannon Entropy Outlier Search (Block-by-Block)");
     mvwprintw(menu_win, 6, 5, "[3] Multi-Word Phrase Search (Natural Language Engine)");
-    mvwprintw(menu_win, 8, 3, "Press 1-3, or Esc to cancel");
+    mvwprintw(menu_win, 7, 5, "[4] Single Block Shannon Entropy Check");
+    mvwprintw(menu_win, 9, 3, "Press 1-4, or Esc to cancel");
     wrefresh(menu_win);
 
     int c_ch = wgetch(menu_win);
@@ -1611,6 +1727,9 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
         int is_full_scan = (unit == '%' && numeric_val >= 99.99) || (target_bytes >= (unsigned long long)drive->size);
 
         drive->offset = execute_phrase_text_search(drive, bytes_per_row, min_word_size, target_bytes, is_full_scan, 0, 0);
+    }
+    else if (c_ch == '4') {
+        handle_single_block_entropy(drive, bytes_per_row);
     }
 }
 
@@ -1876,7 +1995,7 @@ off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, dou
             return execute_entropy_outlier_search(drive, bytes_per_row, threshold, target_bytes, is_full_scan, found_offset, 1);
         }
 
-        return (found_offset / bytes_per_row) * bytes_per_row;
+        return found_offset;
     } else {
         show_message_popup("Search Result", "No blocks found below entropy threshold.");
         return drive->offset;
@@ -2339,11 +2458,141 @@ off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min
             return execute_phrase_text_search(drive, bytes_per_row, min_word_size, target_bytes, is_full_scan, found_offset + 1, 1);
         }
 
-        return (found_offset / bytes_per_row) * bytes_per_row;
+        return found_offset;
     } else {
         show_message_popup("Search Result", "No multi-word phrases found meeting criteria.");
         return drive->offset;
     }
+}
+
+void handle_single_block_entropy(drive_info_t *drive, int bytes_per_row) {
+    (void)bytes_per_row;
+    int p_height = 9;
+    int p_width = 64;
+    int starty = (LINES - p_height) / 2;
+    int startx = (COLS - p_width) / 2;
+
+    WINDOW *pop = newwin(p_height, p_width, starty, startx);
+    keypad(pop, TRUE);
+
+    box(pop, 0, 0);
+    wattron(pop, COLOR_PAIR(CP_TITLE) | A_BOLD);
+    mvwprintw(pop, 0, 2, " Single Block Entropy Check ");
+    wattroff(pop, COLOR_PAIR(CP_TITLE) | A_BOLD);
+
+    mvwprintw(pop, 2, 3, "Enter 512-byte Block Number (e.g. 2048)");
+    mvwprintw(pop, 3, 3, "or Hex/Dec Byte Offset (e.g. 0x100000):");
+    mvwprintw(pop, 6, 3, "Target: ");
+    wrefresh(pop);
+
+    char input_buf[64] = {0};
+    echo();
+    curs_set(1);
+    wgetnstr(pop, input_buf, 63);
+    noecho();
+    curs_set(0);
+    delwin(pop);
+    touchwin(stdscr);
+
+    size_t len = strlen(input_buf);
+    if (len == 0) return;
+
+    while (len > 0 && (input_buf[len - 1] == ' ' || input_buf[len - 1] == '\r' || input_buf[len - 1] == '\n')) {
+        input_buf[--len] = '\0';
+    }
+    if (len == 0) return;
+
+    unsigned long long parsed_val = 0;
+    int is_hex = (strncmp(input_buf, "0x", 2) == 0 || strncmp(input_buf, "0X", 2) == 0);
+
+    if (is_hex) {
+        sscanf(input_buf, "%llx", &parsed_val);
+    } else {
+        int has_alpha_hex = 0;
+        for (size_t i = 0; i < len; i++) {
+            char c = tolower(input_buf[i]);
+            if ((c >= 'a' && c <= 'f')) {
+                has_alpha_hex = 1;
+                break;
+            }
+        }
+        if (has_alpha_hex) {
+            sscanf(input_buf, "%llx", &parsed_val);
+            is_hex = 1;
+        } else {
+            sscanf(input_buf, "%llu", &parsed_val);
+        }
+    }
+
+    off_t target_offset = 0;
+    unsigned long long block_num = 0;
+    size_t block_size = 512;
+
+    unsigned long long total_sectors = (unsigned long long)(drive->size / (off_t)block_size);
+    if (is_hex || parsed_val >= total_sectors) {
+        target_offset = (off_t)parsed_val;
+        if (target_offset >= drive->size) {
+            target_offset = (drive->size > (off_t)block_size) ? (drive->size - (off_t)block_size) : 0;
+        }
+        block_num = (unsigned long long)(target_offset / (off_t)block_size);
+    } else {
+        block_num = parsed_val;
+        target_offset = (off_t)(block_num * block_size);
+        if (target_offset >= drive->size) {
+            target_offset = (drive->size > (off_t)block_size) ? (drive->size - (off_t)block_size) : 0;
+            block_num = (unsigned long long)(target_offset / (off_t)block_size);
+        }
+    }
+
+    unsigned char *block_buf = malloc(block_size);
+    if (!block_buf) {
+        show_message_popup("Error", "Memory allocation failed for single block buffer.");
+        return;
+    }
+
+    lseek(drive->fd, target_offset, SEEK_SET);
+    ssize_t n = read(drive->fd, block_buf, block_size);
+    if (n <= 0) {
+        free(block_buf);
+        show_message_popup("Error", "Failed to read sector from drive.");
+        return;
+    }
+
+    unsigned long long byte_counts[256] = {0};
+    for (ssize_t b = 0; b < n; b++) {
+        byte_counts[block_buf[b]]++;
+    }
+
+    double entropy = 0.0;
+    for (int i = 0; i < 256; i++) {
+        if (byte_counts[i] > 0) {
+            double p = (double)byte_counts[i] / (double)n;
+            entropy -= p * (log(p) / 0.693147180559945319);
+        }
+    }
+
+    free(block_buf);
+
+    const char *status_desc = "Unknown";
+    if (entropy < 0.1) {
+        status_desc = "Plain Zeros (0x00) / Empty Space";
+    } else if (entropy < 1.0) {
+        status_desc = "Low Entropy / Repeating Pattern";
+    } else if (entropy < 7.0) {
+        status_desc = "Structured/Compressed Data / Standard Sector";
+    } else if (entropy >= 7.9) {
+        status_desc = "Max Random Noise (NIST Wipe Verified!)";
+    } else {
+        status_desc = "High Randomness / Encrypted Sector";
+    }
+
+    char title_buf[64];
+    char msg_buf[384];
+    snprintf(title_buf, sizeof(title_buf), " Single Block Entropy Result ");
+    snprintf(msg_buf, sizeof(msg_buf), "Block Index:     %llu\nByte Offset:     0x%012lX\nShannon Entropy: %.4f / 8.0\nStatus:          %s",
+             block_num, (unsigned long)target_offset, entropy, status_desc);
+
+    show_message_popup(title_buf, msg_buf);
 }
 
 void handle_entropy_check(drive_info_t *drive, int bytes_per_row) {
@@ -2663,7 +2912,6 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
     int rows;
     int cols;
     getmaxyx(win, rows, cols);
-    (void)cols; // intentionally unused
     int display_rows = rows - 2;
     if (display_rows < 1) display_rows = 1;
 
@@ -2684,8 +2932,34 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
     box(win, 0, 0);
     wattroff(win, COLOR_PAIR(CP_BORDER));
 
+    // Top Border Line: Device Name & Signature
     wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
-    mvwprintw(win, 0, 2, " Hex View: %s [%s], Offset: 0x%012lX ", drive->name, drive->signature, drive->offset);
+    mvwprintw(win, 0, 2, " Hex View: %s [%s] ", drive->name, drive->signature);
+    wattroff(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
+
+    // Bottom Border Line: Dynamic Block Number, Range, and Offset (adapts to width)
+    unsigned long long block_no = (unsigned long long)(drive->offset / 512);
+    unsigned long long block_start = block_no * 512;
+    unsigned long long block_end = block_start + 511;
+
+    char bottom_str[256];
+    int len_with_range = snprintf(bottom_str, sizeof(bottom_str),
+                                  " Block: %llu | Range: 0x%012lX - 0x%012lX | Offset: 0x%012lX ",
+                                  block_no,
+                                  (unsigned long)block_start,
+                                  (unsigned long)block_end,
+                                  (unsigned long)drive->offset);
+
+    int max_len = cols - 4; // Max width inside borders
+    if (len_with_range > max_len) {
+        snprintf(bottom_str, sizeof(bottom_str),
+                 " Block: %llu | Offset: 0x%012lX ",
+                 block_no,
+                 (unsigned long)drive->offset);
+    }
+
+    wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
+    mvwprintw(win, rows - 1, 2, "%s", bottom_str);
     wattroff(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
 
     char *hex_buf = malloc(bytes_per_row * 3 + 1);
@@ -2766,7 +3040,7 @@ void render_help_view(WINDOW *win, int scroll_offset) {
                 {"Up / Down", "Move drive selection (Left Pane)"},
                 {"PgUp / PgDn", "Scroll Hex View forward/backward by page"},
                 {"< / >", "Jump to Start (0x0) or End of disk"},
-                {"g / G", "Open Goto Menu (Percentage or Byte Offset)"},
+                {"g / G", "Open Goto Menu (Percentage, Byte Offset, or Block Number)"},
                 {"r / R", "Refresh / Reload drive list"},
                 {"h / H", "Toggle this Help Screen"},
                 {"q / Q", "Quit application"}
@@ -2790,9 +3064,10 @@ void render_help_view(WINDOW *win, int scroll_offset) {
             {
                 {"[1] Global Entropy", "Macro average across scope (0.0=Zeros, 8.0=Encrypted)"},
                 {"[2] Block Outlier", "Scan 4KB blocks for structured data (Flags <5.0). Supports 'n'."},
-                {"[3] Multi-Word Search", "Scan for sequences of 3+ words (ignoring apostrophes/quotes). Supports 'n'."}
+                {"[3] Multi-Word Search", "Scan for sequences of 3+ words (ignoring apostrophes/quotes). Supports 'n'."},
+                {"[4] Single Block Entropy", "Analyze Shannon entropy of a specific 512-byte block or offset."}
             },
-            3
+            4
         },
         {
             "SEARCH SCOPE SYNTAX",
