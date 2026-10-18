@@ -83,6 +83,9 @@ When prompted for a search scope:
 - <100% (1000-Chunk Scatter Scan): Divides the target range into 1,000 equal segments and scans them in pseudo-random order. This allows sampling terabytes of drive space in seconds to detect residual data across the disk surface.
 - Custom Units: Supports ranges like 50%, 500M, 8GB, or 2TB.
 
+<img width="994" height="434" alt="Screenshot_20261018_222045" src="https://github.com/user-attachments/assets/6885408e-8d59-4c6a-b0c2-0a532dc92262" />
+
+
 ## Goto - by disc percentage, byte offset or block (LBA)
 <img width="994" height="434" alt="Screenshot_20261018_215111" src="https://github.com/user-attachments/assets/3b4035b4-9104-4a01-a546-1855dc7632b6" />
 
