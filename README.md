@@ -52,7 +52,7 @@ The interface is divided into three primary regions:
 |Key | Description |
 | -- | ----------- |
 | Up / Down | Select drive in left |
-| panePgUp / PgDnScroll Hex View | forward or backward by one full page |
+| panePgUp / PgDn Scroll Hex View | forward or backward by one full page |
 | < / > | Jump directly to the start (0x0) or end of the disk |
 | g / G | Open Go To popup (Percentage, Byte Offset, or LBA Block Number) |
 | s / S | Open Search Category menu |
