@@ -1,3 +1,5 @@
+/* This MUST come before system includes and guard */
+#define _FILE_OFFSET_BITS 64
 #ifndef SHREDOS_HEXVIEWER_H
 #define SHREDOS_HEXVIEWER_H
 
