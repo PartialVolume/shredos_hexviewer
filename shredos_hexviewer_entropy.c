@@ -27,12 +27,10 @@ int is_valid_word(const unsigned char *word_buf, int len) {
         max_consec_consonants = current_consec_consonants;
     }
 
-    // Max 3 consecutive consonants per word
     if (max_consec_consonants > 3) {
         return 0;
     }
 
-    // For words of length 3+, require at least 1 true vowel
     if (len >= 3 && vowels == 0) {
         return 0;
     }
@@ -70,7 +68,6 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
     if (c_ch == '1') {
         handle_entropy_check(drive, bytes_per_row);
     } else if (c_ch == '2') {
-        // --- Step 1: Threshold Input Popup ---
         int p_height = 8;
         int p_width = 60;
         starty = (LINES - p_height) / 2;
@@ -104,7 +101,6 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
             }
         }
 
-        // --- Step 2: Scope Input Popup ---
         p_height = 10;
         p_width = 66;
         starty = (LINES - p_height) / 2;
@@ -177,20 +173,27 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
             if (numeric_val > 100) numeric_val = 100;
             target_bytes = (unsigned long long)((double)drive->size * (numeric_val / 100.0));
         } else if (unit == 'T') {
-            target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0 * 1024.0 * 1024.0);
+            target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0 * 1000.0 * 1000.0);
         } else if (unit == 'G') {
-            target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0 * 1024.0);
+            target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0 * 1000.0);
         } else if (unit == 'M') {
-            target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0);
+            target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0);
         } else if (unit == 'K') {
-            target_bytes = (unsigned long long)(numeric_val * 1024.0);
+            target_bytes = (unsigned long long)(numeric_val * 1000.0);
         } else {
             target_bytes = (unsigned long long)numeric_val;
         }
 
         if (target_bytes == 0) target_bytes = 4096 * 100;
+
         if (target_bytes > (unsigned long long)drive->size) {
-            target_bytes = (unsigned long long)drive->size;
+            char human_sz[32];
+            char msg[256];
+            format_human_size(drive->size, human_sz, sizeof(human_sz));
+            snprintf(msg, sizeof(msg), "Entered entropy scan scope exceeds drive size!\nMaximum drive size is 0x%012lX (%llu bytes / %s).\nPlease specify a valid scope.",
+                     (unsigned long)drive->size, (unsigned long long)drive->size, human_sz);
+            show_message_popup("Invalid Scope", msg);
+            return;
         }
 
         int is_full_scan = (unit == '%' && numeric_val >= 99.99) || (target_bytes >= (unsigned long long)drive->size);
@@ -198,7 +201,6 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
         drive->offset = execute_entropy_outlier_search(drive, bytes_per_row, threshold, target_bytes, is_full_scan, 0, 0);
     }
     else if (c_ch == '3') {
-        // --- Step 1: Minimum Word Size Input Popup ---
         int p_height = 8;
         int p_width = 62;
         starty = (LINES - p_height) / 2;
@@ -232,7 +234,6 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
             }
         }
 
-        // --- Step 2: Scope Input Popup ---
         p_height = 10;
         p_width = 66;
         starty = (LINES - p_height) / 2;
@@ -305,20 +306,27 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
             if (numeric_val > 100) numeric_val = 100;
             target_bytes = (unsigned long long)((double)drive->size * (numeric_val / 100.0));
         } else if (unit == 'T') {
-            target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0 * 1024.0 * 1024.0);
+            target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0 * 1000.0 * 1000.0);
         } else if (unit == 'G') {
-            target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0 * 1024.0);
+            target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0 * 1000.0);
         } else if (unit == 'M') {
-            target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0);
+            target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0);
         } else if (unit == 'K') {
-            target_bytes = (unsigned long long)(numeric_val * 1024.0);
+            target_bytes = (unsigned long long)(numeric_val * 1000.0);
         } else {
             target_bytes = (unsigned long long)numeric_val;
         }
 
         if (target_bytes == 0) target_bytes = 4096 * 100;
+
         if (target_bytes > (unsigned long long)drive->size) {
-            target_bytes = (unsigned long long)drive->size;
+            char human_sz[32];
+            char msg[256];
+            format_human_size(drive->size, human_sz, sizeof(human_sz));
+            snprintf(msg, sizeof(msg), "Entered phrase search scope exceeds drive size!\nMaximum drive size is 0x%012lX (%llu bytes / %s).\nPlease specify a valid scope.",
+                     (unsigned long)drive->size, (unsigned long long)drive->size, human_sz);
+            show_message_popup("Invalid Scope", msg);
+            return;
         }
 
         int is_full_scan = (unit == '%' && numeric_val >= 99.99) || (target_bytes >= (unsigned long long)drive->size);
@@ -331,10 +339,10 @@ void handle_entropy_menu(drive_info_t *drive, int bytes_per_row) {
 }
 
 off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, double threshold, unsigned long long target_bytes, int is_full_scan, off_t start_offset, int is_find_next) {
-    double target_mb = (double)target_bytes / (1024.0 * 1024.0);
+    double target_mb = (double)target_bytes / (1000.0 * 1000.0);
     if (target_mb < 0.1) target_mb = 0.1;
 
-    size_t block_size = 4096; // 4KB blocks for block entropy calculation
+    size_t block_size = 4096;
     int found = 0;
     int cancelled = 0;
     off_t found_offset = start_offset;
@@ -398,9 +406,12 @@ off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, dou
             }
             if (to_read == 0) break;
 
-            lseek(drive->fd, check_offset, SEEK_SET);
-            ssize_t n = read(drive->fd, block_buf, to_read);
-            if (n <= 0) break;
+            ssize_t n = safe_read(drive->fd, block_buf, to_read, drive->name, check_offset);
+            if (n == -1) {
+                cancelled = 1;
+                break;
+            }
+            if (n == 0) break;
 
             unsigned long long byte_counts[256] = {0};
             for (ssize_t b = 0; b < n; b++) {
@@ -425,7 +436,7 @@ off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, dou
             total_bytes_read += n;
             int percent = (int)((total_bytes_read * 100) / target_bytes);
             if (percent > 100) percent = 100;
-            double checked_mb = (double)total_bytes_read / (1024.0 * 1024.0);
+            double checked_mb = (double)total_bytes_read / (1000.0 * 1000.0);
 
             mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
             mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
@@ -515,9 +526,12 @@ off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, dou
                 }
                 if (to_read == 0) break;
 
-                lseek(drive->fd, check_offset, SEEK_SET);
-                ssize_t n = read(drive->fd, block_buf, to_read);
-                if (n <= 0) break;
+                ssize_t n = safe_read(drive->fd, block_buf, to_read, drive->name, check_offset);
+                if (n == -1) {
+                    cancelled = 1;
+                    break;
+                }
+                if (n == 0) break;
 
                 unsigned long long byte_counts[256] = {0};
                 for (ssize_t b = 0; b < n; b++) {
@@ -542,7 +556,7 @@ off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, dou
                 total_bytes_read += n;
                 int percent = (int)((total_bytes_read * 100) / target_bytes);
                 if (percent > 100) percent = 100;
-                double checked_mb = (double)total_bytes_read / (1024.0 * 1024.0);
+                double checked_mb = (double)total_bytes_read / (1000.0 * 1000.0);
 
                 mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
                 mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
@@ -561,7 +575,7 @@ off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, dou
     touchwin(stdscr);
 
     if (cancelled) {
-        show_message_popup("Cancelled", "Outlier search cancelled by user.");
+        show_message_popup("Cancelled", "Outlier search cancelled by user or aborted due to I/O error.");
         return drive->offset;
     }
 
@@ -599,7 +613,7 @@ off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, dou
 }
 
 off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min_word_size, unsigned long long target_bytes, int is_full_scan, off_t start_offset, int is_find_next) {
-    double target_mb = (double)target_bytes / (1024.0 * 1024.0);
+    double target_mb = (double)target_bytes / (1000.0 * 1000.0);
     if (target_mb < 0.1) target_mb = 0.1;
 
     size_t sector_size = 512;
@@ -634,7 +648,7 @@ off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min
     }
 
     mvwprintw(prog_win, 2, 3, "Progress:   %3d%% complete", initial_percent);
-    mvwprintw(prog_win, 3, 3, "Checked:    %.1fMB / %.1fMB", (double)initial_bytes_scanned / (1024.0 * 1024.0), target_mb);
+    mvwprintw(prog_win, 3, 3, "Checked:    %.1fMB / %.1fMB", (double)initial_bytes_scanned / (1000.0 * 1000.0), target_mb);
     mvwprintw(prog_win, 5, 3, "Press ESC to cancel search");
     wrefresh(prog_win);
 
@@ -672,9 +686,12 @@ off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min
             }
             if (to_read == 0) break;
 
-            lseek(drive->fd, check_offset, SEEK_SET);
-            ssize_t n = read(drive->fd, sector_buf, to_read);
-            if (n <= 0) break;
+            ssize_t n = safe_read(drive->fd, sector_buf, to_read, drive->name, check_offset);
+            if (n == -1) {
+                cancelled = 1;
+                break;
+            }
+            if (n == 0) break;
 
             unsigned char search_buf[512 + 256];
             memcpy(search_buf, history, history_len);
@@ -767,7 +784,7 @@ off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min
 
             int percent = (int)((total_bytes_scanned * 100) / target_bytes);
             if (percent > 100) percent = 100;
-            double checked_mb = (double)total_bytes_scanned / (1024.0 * 1024.0);
+            double checked_mb = (double)total_bytes_scanned / (1000.0 * 1000.0);
 
             mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
             mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
@@ -853,9 +870,12 @@ off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min
                 }
                 if (to_read == 0) break;
 
-                lseek(drive->fd, check_offset, SEEK_SET);
-                ssize_t n = read(drive->fd, sector_buf, to_read);
-                if (n <= 0) break;
+                ssize_t n = safe_read(drive->fd, sector_buf, to_read, drive->name, check_offset);
+                if (n == -1) {
+                    cancelled = 1;
+                    break;
+                }
+                if (n == 0) break;
 
                 unsigned char search_buf[512 + 256];
                 memcpy(search_buf, history, history_len);
@@ -948,7 +968,7 @@ off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min
 
                 int percent = (int)((total_bytes_scanned * 100) / target_bytes);
                 if (percent > 100) percent = 100;
-                double checked_mb = (double)total_bytes_scanned / (1024.0 * 1024.0);
+                double checked_mb = (double)total_bytes_scanned / (1000.0 * 1000.0);
 
                 mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
                 mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
@@ -967,15 +987,14 @@ off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min
     touchwin(stdscr);
 
     if (cancelled) {
-        show_message_popup("Cancelled", "Phrase search cancelled by user.");
+        show_message_popup("Cancelled", "Phrase search cancelled by user or aborted due to I/O error.");
         return drive->offset;
     }
 
     if (found) {
         char text_preview[44] = {0};
-        lseek(drive->fd, found_offset, SEEK_SET);
         unsigned char preview_buf[40];
-        ssize_t p_n = read(drive->fd, preview_buf, sizeof(preview_buf));
+        ssize_t p_n = safe_read(drive->fd, preview_buf, sizeof(preview_buf), drive->name, found_offset);
         if (p_n > 0) {
             int p_len = 0;
             for (ssize_t i = 0; i < p_n && p_len < 40; i++) {
@@ -1088,15 +1107,26 @@ void handle_single_block_entropy(drive_info_t *drive, int bytes_per_row) {
     if (is_hex || parsed_val >= total_sectors) {
         target_offset = (off_t)parsed_val;
         if (target_offset >= drive->size) {
-            target_offset = (drive->size > (off_t)block_size) ? (drive->size - (off_t)block_size) : 0;
+            char human_sz[32];
+            char msg[256];
+            format_human_size(drive->size, human_sz, sizeof(human_sz));
+            snprintf(msg, sizeof(msg), "Entered byte offset (0x%012lX) exceeds drive size!\nMaximum drive size is 0x%012lX (%llu bytes / %s).",
+                     (unsigned long)target_offset, (unsigned long)drive->size, (unsigned long long)drive->size, human_sz);
+            show_message_popup("Invalid Offset", msg);
+            return;
         }
         block_num = (unsigned long long)(target_offset / (off_t)block_size);
     } else {
         block_num = parsed_val;
         target_offset = (off_t)(block_num * block_size);
         if (target_offset >= drive->size) {
-            target_offset = (drive->size > (off_t)block_size) ? (drive->size - (off_t)block_size) : 0;
-            block_num = (unsigned long long)(target_offset / (off_t)block_size);
+            char human_sz[32];
+            char msg[256];
+            format_human_size(drive->size, human_sz, sizeof(human_sz));
+            snprintf(msg, sizeof(msg), "Entered block number (%llu) exceeds drive capacity!\nMaximum block number is %llu (%s).",
+                     block_num, total_sectors, human_sz);
+            show_message_popup("Invalid Block Number", msg);
+            return;
         }
     }
 
@@ -1106,11 +1136,9 @@ void handle_single_block_entropy(drive_info_t *drive, int bytes_per_row) {
         return;
     }
 
-    lseek(drive->fd, target_offset, SEEK_SET);
-    ssize_t n = read(drive->fd, block_buf, block_size);
+    ssize_t n = safe_read(drive->fd, block_buf, block_size, drive->name, target_offset);
     if (n <= 0) {
         free(block_buf);
-        show_message_popup("Error", "Failed to read sector from drive.");
         return;
     }
 
@@ -1225,23 +1253,30 @@ void handle_entropy_check(drive_info_t *drive, int bytes_per_row) {
         if (numeric_val > 100) numeric_val = 100;
         target_bytes = (unsigned long long)((double)drive->size * (numeric_val / 100.0));
     } else if (unit == 'T') {
-        target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0 * 1024.0 * 1024.0);
+        target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0 * 1000.0 * 1000.0);
     } else if (unit == 'G') {
-        target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0 * 1024.0);
+        target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0 * 1000.0);
     } else if (unit == 'M') {
-        target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0);
+        target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0);
     } else if (unit == 'K') {
-        target_bytes = (unsigned long long)(numeric_val * 1024.0);
+        target_bytes = (unsigned long long)(numeric_val * 1000.0);
     } else {
         target_bytes = (unsigned long long)numeric_val;
     }
 
     if (target_bytes == 0) target_bytes = 4096 * 100;
+
     if (target_bytes > (unsigned long long)drive->size) {
-        target_bytes = (unsigned long long)drive->size;
+        char human_sz[32];
+        char msg[256];
+        format_human_size(drive->size, human_sz, sizeof(human_sz));
+        snprintf(msg, sizeof(msg), "Entered entropy scan scope exceeds drive size!\nMaximum drive size is 0x%012lX (%llu bytes / %s).\nPlease specify a valid scope.",
+                 (unsigned long)drive->size, (unsigned long long)drive->size, human_sz);
+        show_message_popup("Invalid Scope", msg);
+        return;
     }
 
-    double target_mb = (double)target_bytes / (1024.0 * 1024.0);
+    double target_mb = (double)target_bytes / (1000.0 * 1000.0);
     if (target_mb < 0.1) target_mb = 0.1;
 
     int is_full_scan = (unit == '%' && numeric_val >= 99.99) || (target_bytes >= (unsigned long long)drive->size);
@@ -1303,9 +1338,12 @@ void handle_entropy_check(drive_info_t *drive, int bytes_per_row) {
             }
             if (to_read == 0) break;
 
-            lseek(drive->fd, check_offset, SEEK_SET);
-            ssize_t n = read(drive->fd, sector_buf, to_read);
-            if (n <= 0) break;
+            ssize_t n = safe_read(drive->fd, sector_buf, to_read, drive->name, check_offset);
+            if (n == -1) {
+                cancelled = 1;
+                break;
+            }
+            if (n == 0) break;
 
             for (ssize_t b = 0; b < n; b++) {
                 byte_counts[sector_buf[b]]++;
@@ -1314,7 +1352,7 @@ void handle_entropy_check(drive_info_t *drive, int bytes_per_row) {
 
             int percent = (int)((total_sampled_bytes * 100) / target_bytes);
             if (percent > 100) percent = 100;
-            double checked_mb = (double)total_sampled_bytes / (1024.0 * 1024.0);
+            double checked_mb = (double)total_sampled_bytes / (1000.0 * 1000.0);
 
             mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
             mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
@@ -1397,9 +1435,12 @@ void handle_entropy_check(drive_info_t *drive, int bytes_per_row) {
                 }
                 if (to_read == 0) break;
 
-                lseek(drive->fd, check_offset, SEEK_SET);
-                ssize_t n = read(drive->fd, sector_buf, to_read);
-                if (n <= 0) break;
+                ssize_t n = safe_read(drive->fd, sector_buf, to_read, drive->name, check_offset);
+                if (n == -1) {
+                    cancelled = 1;
+                    break;
+                }
+                if (n == 0) break;
 
                 for (ssize_t b = 0; b < n; b++) {
                     byte_counts[sector_buf[b]]++;
@@ -1408,7 +1449,7 @@ void handle_entropy_check(drive_info_t *drive, int bytes_per_row) {
 
                 int percent = (int)((total_sampled_bytes * 100) / target_bytes);
                 if (percent > 100) percent = 100;
-                double checked_mb = (double)total_sampled_bytes / (1024.0 * 1024.0);
+                double checked_mb = (double)total_sampled_bytes / (1000.0 * 1000.0);
 
                 mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
                 mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
@@ -1427,7 +1468,7 @@ void handle_entropy_check(drive_info_t *drive, int bytes_per_row) {
     touchwin(stdscr);
 
     if (cancelled) {
-        show_message_popup("Cancelled", "Entropy check cancelled by user.");
+        show_message_popup("Cancelled", "Entropy check cancelled by user or aborted due to I/O error.");
         return;
     }
 
@@ -1459,7 +1500,7 @@ void handle_entropy_check(drive_info_t *drive, int bytes_per_row) {
     }
 
     snprintf(msg_buf, sizeof(msg_buf), "Shannon Entropy: %.4f / 8.0\nSampled Size:    %.1f MB\nStatus:          %s",
-             entropy, (double)total_sampled_bytes / (1024.0 * 1024.0), status_desc);
+             entropy, (double)total_sampled_bytes / (1000.0 * 1000.0), status_desc);
 
     show_message_popup(title_buf, msg_buf);
 }

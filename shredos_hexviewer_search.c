@@ -71,6 +71,18 @@ off_t handle_goto_popup(drive_info_t *drive, int bytes_per_row) {
             sscanf(input_buf, "%llu", &val);
         }
         new_offset = (off_t)val;
+
+        if (new_offset > drive->size) {
+            char human_sz[32];
+            char msg[256];
+            format_human_size(drive->size, human_sz, sizeof(human_sz));
+            snprintf(msg, sizeof(msg), "Entered offset (0x%012lX) exceeds drive size!\nMaximum drive size is 0x%012lX (%llu bytes / %s).",
+                     (unsigned long)new_offset, (unsigned long)drive->size, (unsigned long long)drive->size, human_sz);
+            show_message_popup("Invalid Offset", msg);
+            delwin(pop);
+            touchwin(stdscr);
+            return drive->offset;
+        }
     }
     else if (ch == 'l' || ch == 'L') {
         wclear(pop);
@@ -96,14 +108,24 @@ off_t handle_goto_popup(drive_info_t *drive, int bytes_per_row) {
             sscanf(input_buf, "%llu", &block_num);
         }
         new_offset = (off_t)(block_num * 512);
+
+        if (new_offset > drive->size) {
+            char human_sz[32];
+            char msg[256];
+            format_human_size(drive->size, human_sz, sizeof(human_sz));
+            unsigned long long max_blocks = (unsigned long long)(drive->size / 512);
+            snprintf(msg, sizeof(msg), "Entered block number (%llu) exceeds drive capacity!\nMaximum block number is %llu (%s).",
+                     block_num, max_blocks, human_sz);
+            show_message_popup("Invalid Block Number", msg);
+            delwin(pop);
+            touchwin(stdscr);
+            return drive->offset;
+        }
     }
 
     delwin(pop);
     touchwin(stdscr);
 
-    if (new_offset > drive->size) {
-        new_offset = drive->size;
-    }
     if (new_offset < 0) {
         new_offset = 0;
     }
@@ -308,20 +330,27 @@ off_t handle_random_search(drive_info_t *drive, int bytes_per_row) {
         if (numeric_val > 100) numeric_val = 100;
         target_bytes = (unsigned long long)((double)drive->size * (numeric_val / 100.0));
     } else if (unit == 'T') {
-        target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0 * 1024.0 * 1024.0);
+        target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0 * 1000.0 * 1000.0);
     } else if (unit == 'G') {
-        target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0 * 1024.0);
+        target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0 * 1000.0);
     } else if (unit == 'M') {
-        target_bytes = (unsigned long long)(numeric_val * 1024.0 * 1024.0);
+        target_bytes = (unsigned long long)(numeric_val * 1000.0 * 1000.0);
     } else if (unit == 'K') {
-        target_bytes = (unsigned long long)(numeric_val * 1024.0);
+        target_bytes = (unsigned long long)(numeric_val * 1000.0);
     } else {
         target_bytes = (unsigned long long)numeric_val;
     }
 
     if (target_bytes == 0) target_bytes = (unsigned long long)bytes_per_row * 100;
+
     if (target_bytes > (unsigned long long)drive->size) {
-        target_bytes = (unsigned long long)drive->size;
+        char human_sz[32];
+        char msg[256];
+        format_human_size(drive->size, human_sz, sizeof(human_sz));
+        snprintf(msg, sizeof(msg), "Entered search scope exceeds drive size!\nMaximum drive size is 0x%012lX (%llu bytes / %s).\nPlease specify a valid scope.",
+                 (unsigned long)drive->size, (unsigned long long)drive->size, human_sz);
+        show_message_popup("Invalid Scope", msg);
+        return drive->offset;
     }
 
     int is_full_scan = (unit == '%' && numeric_val >= 99.99) || (target_bytes >= (unsigned long long)drive->size);
@@ -330,7 +359,7 @@ off_t handle_random_search(drive_info_t *drive, int bytes_per_row) {
 }
 
 off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t search_type, search_pattern_element_t *hex_pattern, unsigned char *ascii_pattern, int pat_len, unsigned long long target_bytes, int is_full_scan, off_t start_offset, int is_find_next) {
-    double target_mb = (double)target_bytes / (1024.0 * 1024.0);
+    double target_mb = (double)target_bytes / (1000.0 * 1000.0);
     if (target_mb < 0.1) target_mb = 0.1;
 
     size_t sector_size = 512;
@@ -393,9 +422,12 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
             }
             if (to_read == 0) break;
 
-            lseek(drive->fd, check_offset, SEEK_SET);
-            ssize_t n = read(drive->fd, sector_buf, to_read);
-            if (n <= 0) break;
+            ssize_t n = safe_read(drive->fd, sector_buf, to_read, drive->name, check_offset);
+            if (n == -1) {
+                cancelled = 1;
+                break;
+            }
+            if (n == 0) break;
 
             unsigned char search_buf[512 + 64];
             memcpy(search_buf, history, history_len);
@@ -474,7 +506,7 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
             total_bytes_read += n;
             int percent = (int)((total_bytes_read * 100) / target_bytes);
             if (percent > 100) percent = 100;
-            double checked_mb = (double)total_bytes_read / (1024.0 * 1024.0);
+            double checked_mb = (double)total_bytes_read / (1000.0 * 1000.0);
 
             mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
             mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
@@ -562,9 +594,12 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
                 }
                 if (to_read == 0) break;
 
-                lseek(drive->fd, check_offset, SEEK_SET);
-                ssize_t n = read(drive->fd, sector_buf, to_read);
-                if (n <= 0) break;
+                ssize_t n = safe_read(drive->fd, sector_buf, to_read, drive->name, check_offset);
+                if (n == -1) {
+                    cancelled = 1;
+                    break;
+                }
+                if (n == 0) break;
 
                 unsigned char search_buf[512 + 64];
                 memcpy(search_buf, history, history_len);
@@ -643,7 +678,7 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
                 total_bytes_read += n;
                 int percent = (int)((total_bytes_read * 100) / target_bytes);
                 if (percent > 100) percent = 100;
-                double checked_mb = (double)total_bytes_read / (1024.0 * 1024.0);
+                double checked_mb = (double)total_bytes_read / (1000.0 * 1000.0);
 
                 mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
                 mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
@@ -662,7 +697,7 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
     touchwin(stdscr);
 
     if (cancelled) {
-        show_message_popup("Cancelled", "Search cancelled by user.");
+        show_message_popup("Cancelled", "Search cancelled by user or aborted due to I/O error.");
         return drive->offset;
     }
 
