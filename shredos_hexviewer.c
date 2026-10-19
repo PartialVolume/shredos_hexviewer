@@ -54,6 +54,8 @@ int main(int argc, char *argv[]) {
     wtimeout(win_left, 250);
 
     int running = 1;
+    int redraw_needed = 1; // Force initial draw on startup
+
     while (running) {
         // --- Throttled Hot-Plug Check (Runs every 1 second max, only if drives changed) ---
         struct timespec now_hp;
@@ -99,111 +101,120 @@ int main(int argc, char *argv[]) {
                 if (selected_drive < 0) {
                     selected_drive = 0;
                 }
+                redraw_needed = 1; // Mark redraw required due to drive hot-plug change
             }
         }
 
-        // --- Render Top Title Box ---
-        wclear(win_title);
-        wattron(win_title, COLOR_PAIR(CP_BORDER));
-        box(win_title, 0, 0);
-        wattroff(win_title, COLOR_PAIR(CP_BORDER));
+        // --- Render UI ONLY When Needed (Prevents Screen Flickering) ---
+        if (redraw_needed) {
+            // --- Render Top Title Box ---
+            wclear(win_title);
+            wattron(win_title, COLOR_PAIR(CP_BORDER));
+            box(win_title, 0, 0);
+            wattroff(win_title, COLOR_PAIR(CP_BORDER));
 
-        wattron(win_title, COLOR_PAIR(CP_TITLE) | A_BOLD);
-        mvwprintw(win_title, 1, 2, " shredos_hexviewer v1.2");
-        wattroff(win_title, COLOR_PAIR(CP_TITLE) | A_BOLD);
-        wrefresh(win_title);
+            wattron(win_title, COLOR_PAIR(CP_TITLE) | A_BOLD);
+            mvwprintw(win_title, 1, 2, " shredos_hexviewer v1.2");
+            wattroff(win_title, COLOR_PAIR(CP_TITLE) | A_BOLD);
+            wrefresh(win_title);
 
-        // --- Render Left Pane (Scrollable Drive List with Model / Serial) ---
-        wclear(win_left);
-        wattron(win_left, COLOR_PAIR(CP_BORDER));
-        box(win_left, 0, 0);
-        wattroff(win_left, COLOR_PAIR(CP_BORDER));
+            // --- Render Left Pane (Scrollable Drive List with Model / Serial) ---
+            wclear(win_left);
+            wattron(win_left, COLOR_PAIR(CP_BORDER));
+            box(win_left, 0, 0);
+            wattroff(win_left, COLOR_PAIR(CP_BORDER));
 
-        wattron(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
-        mvwprintw(win_left, 0, 2, " Devices ");
-        wattroff(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
+            wattron(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
+            mvwprintw(win_left, 0, 2, " Devices ");
+            wattroff(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
 
-        // Calculate how many drive items (2 lines each) fit in the left pane
-        int visible_slots = (main_height - 2) / 2;
-        if (visible_slots < 1) visible_slots = 1;
+            // Calculate how many drive items (2 lines each) fit in the left pane
+            int visible_slots = (main_height - 2) / 2;
+            if (visible_slots < 1) visible_slots = 1;
 
-        // Adjust scroll offset to keep selected drive in view
-        if (selected_drive < scroll_offset) {
-            scroll_offset = selected_drive;
-        } else if (selected_drive >= scroll_offset + visible_slots) {
-            scroll_offset = selected_drive - visible_slots + 1;
-        }
-
-        // Top "More" indicator if items exist above view
-        if (scroll_offset > 0) {
-            wattron(win_left, COLOR_PAIR(CP_TITLE));
-            mvwprintw(win_left, 0, 11, "(More ^)");
-            wattroff(win_left, COLOR_PAIR(CP_TITLE));
-        }
-
-        if (drive_count == 0) {
-            mvwprintw(win_left, 2, 2, "No drives found.");
-        } else {
-            int current_row = 1;
-            for (int i = scroll_offset; i < drive_count && (current_row + 1 < main_height - 1); i++) {
-                if (i == selected_drive) {
-                    wattron(win_left, A_REVERSE);
-                }
-
-                // Line 1: Device Name (e.g. sda)
-                mvwprintw(win_left, current_row, 1, " %-29s", drives[i].name);
-                current_row++;
-
-                // Line 2: Model / Serial
-                if (current_row < main_height - 1) {
-                    mvwprintw(win_left, current_row, 1, " %-29s", drives[i].model_serial);
-                    current_row++;
-                }
-
-                if (i == selected_drive) {
-                    wattroff(win_left, A_REVERSE);
-                }
+            // Adjust scroll offset to keep selected drive in view
+            if (selected_drive < scroll_offset) {
+                scroll_offset = selected_drive;
+            } else if (selected_drive >= scroll_offset + visible_slots) {
+                scroll_offset = selected_drive - visible_slots + 1;
             }
 
-            // Bottom "More" indicator if items exist below view
-            if (scroll_offset + visible_slots < drive_count) {
+            // Top "More" indicator if items exist above view
+            if (scroll_offset > 0) {
                 wattron(win_left, COLOR_PAIR(CP_TITLE));
-                mvwprintw(win_left, main_height - 1, left_width - 10, "(More v)");
+                mvwprintw(win_left, 0, 11, "(More ^)");
                 wattroff(win_left, COLOR_PAIR(CP_TITLE));
             }
-        }
-        wrefresh(win_left);
 
-        // --- Render Right Pane (Help View or Dynamic Hex & ASCII View) ---
-        if (show_help) {
-            render_help_view(win_right, help_scroll_offset);
-        } else if (drive_count > 0) {
-            render_hex_view(win_right, &drives[selected_drive]);
-        } else {
-            wclear(win_right);
-            wattron(win_right, COLOR_PAIR(CP_BORDER));
-            box(win_right, 0, 0);
-            wattroff(win_right, COLOR_PAIR(CP_BORDER));
-            mvwprintw(win_right, 1, 2, "No drive selected.");
-            wrefresh(win_right);
-        }
+            if (drive_count == 0) {
+                mvwprintw(win_left, 2, 2, "No drives found.");
+            } else {
+                int current_row = 1;
+                for (int i = scroll_offset; i < drive_count && (current_row + 1 < main_height - 1); i++) {
+                    if (i == selected_drive) {
+                        wattron(win_left, A_REVERSE);
+                    }
 
-        // --- Render Frameless Help Bar on Bottom Line ---
-        wclear(win_help);
-        if (show_help) {
-            mvwprintw(win_help, 0, 0, "   Up/Down/PgUp/PgDn=Scroll Help | h or Esc=Return to Hex View");
-        } else {
-            mvwprintw(win_help, 0, 0, "   r=Reload | g=goto | s=search | e=entropy | h=Help | PgUp/PgDn=Scroll | q=Quit");
+                    // Line 1: Device Name (e.g. sda)
+                    mvwprintw(win_left, current_row, 1, " %-29s", drives[i].name);
+                    current_row++;
+
+                    // Line 2: Model / Serial
+                    if (current_row < main_height - 1) {
+                        mvwprintw(win_left, current_row, 1, " %-29s", drives[i].model_serial);
+                        current_row++;
+                    }
+
+                    if (i == selected_drive) {
+                        wattroff(win_left, A_REVERSE);
+                    }
+                }
+
+                // Bottom "More" indicator if items exist below view
+                if (scroll_offset + visible_slots < drive_count) {
+                    wattron(win_left, COLOR_PAIR(CP_TITLE));
+                    mvwprintw(win_left, main_height - 1, left_width - 10, "(More v)");
+                    wattroff(win_left, COLOR_PAIR(CP_TITLE));
+                }
+            }
+            wrefresh(win_left);
+
+            // --- Render Right Pane (Help View or Dynamic Hex & ASCII View) ---
+            if (show_help) {
+                render_help_view(win_right, help_scroll_offset);
+            } else if (drive_count > 0) {
+                render_hex_view(win_right, &drives[selected_drive]);
+            } else {
+                wclear(win_right);
+                wattron(win_right, COLOR_PAIR(CP_BORDER));
+                box(win_right, 0, 0);
+                wattroff(win_right, COLOR_PAIR(CP_BORDER));
+                mvwprintw(win_right, 1, 2, "No drive selected.");
+                wrefresh(win_right);
+            }
+
+            // --- Render Frameless Help Bar on Bottom Line ---
+            wclear(win_help);
+            if (show_help) {
+                mvwprintw(win_help, 0, 0, "   Up/Down/PgUp/PgDn=Scroll Help | h or Esc=Return to Hex View");
+            } else {
+                mvwprintw(win_help, 0, 0, "   r=Reload | g=goto | s=search | e=entropy | h=Help | PgUp/PgDn=Scroll | q=Quit");
+            }
+            wrefresh(win_help);
+
+            redraw_needed = 0; // Reset flag after rendering completes
         }
-        wrefresh(win_help);
 
         // --- Handle Input (Timed 250ms Poll) ---
         ch = wgetch(win_left);
 
-        // If no key was pressed within 250ms, wgetch returns ERR -> loop continues for auto-refresh
+        // If no key was pressed within 250ms, wgetch returns ERR -> loop skips redrawing and continues polling
         if (ch == ERR) {
             continue;
         }
+
+        // A key was pressed, so a screen redraw will be required for the next iteration
+        redraw_needed = 1;
 
         if (ch == KEY_RESIZE) {
             // Update terminal geometry
