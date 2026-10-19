@@ -21,12 +21,12 @@ void init_ncurses_ui(void) {
 
 int get_dynamic_bytes_per_row(WINDOW *win) {
     int maxx;
-    maxx = getmaxx(win); // Using getmaxx instead of getmaxyx avoids the unused variable entirely
+    maxx = getmaxx(win);
 
     int bytes = (maxx - 23) / 4;
 
     if (bytes < 4)  bytes = 4;   // Safe floor for narrow 80-col terminals
-    if (bytes > 32) bytes = 32;  // Maximum ceiling
+    if (bytes > 80) bytes = 80;  // Raised ceiling for ultra-wide 300+ col displays
     return bytes;
 }
 
