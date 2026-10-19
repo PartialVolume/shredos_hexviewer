@@ -20,17 +20,14 @@ void init_ncurses_ui(void) {
 }
 
 int get_dynamic_bytes_per_row(WINDOW *win) {
-    int rows;
-    int cols;
-    getmaxyx(win, rows, cols);
-    (void)rows; // intentionally unused
-    int inner_width = cols - 4; // account for borders/margins
-    if (inner_width < 32) inner_width = 32;
+    int maxx;
+    maxx = getmaxx(win); // Using getmaxx instead of getmaxyx avoids the unused variable entirely
 
-    int bpr = (inner_width - 16) / 4;
-    if (bpr < 4) bpr = 4;
-    if (bpr > 128) bpr = 128;
-    return bpr;
+    int bytes = (maxx - 23) / 4;
+
+    if (bytes < 4)  bytes = 4;   // Safe floor for narrow 80-col terminals
+    if (bytes > 32) bytes = 32;  // Maximum ceiling
+    return bytes;
 }
 
 void show_message_popup(const char *title, const char *msg) {
