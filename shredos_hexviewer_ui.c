@@ -151,8 +151,8 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
             }
         }
 
-        mvwprintw(win, i + 1, 2, "%012lX:  %-*s   %s",
-                  row_addr,
+        mvwprintw(win, i + 1, 2, "%012llX:  %-*s   %s",
+                  (unsigned long long)row_addr,
                   bytes_per_row * 3,
                   hex_buf,
                   ascii_buf);
