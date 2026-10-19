@@ -54,7 +54,9 @@ int main(int argc, char *argv[]) {
     wtimeout(win_left, 250);
 
     int running = 1;
-    int redraw_needed = 1; // Force initial draw on startup
+    int redraw_all = 1;   // Force initial full draw on startup
+    int redraw_left = 0;
+    int redraw_right = 0;
 
     while (running) {
         // --- Throttled Hot-Plug Check (Runs every 1 second max, only if drives changed) ---
@@ -101,13 +103,13 @@ int main(int argc, char *argv[]) {
                 if (selected_drive < 0) {
                     selected_drive = 0;
                 }
-                redraw_needed = 1; // Mark redraw required due to drive hot-plug change
+                redraw_all = 1; // Full redraw required due to drive hot-plug change
             }
         }
 
-        // --- Render UI ONLY When Needed (Prevents Screen Flickering) ---
-        if (redraw_needed) {
-            // --- Render Top Title Box ---
+        // --- Selective UI Rendering ---
+        if (redraw_all) {
+            // Render Top Title Box
             wclear(win_title);
             wattron(win_title, COLOR_PAIR(CP_BORDER));
             box(win_title, 0, 0);
@@ -118,7 +120,22 @@ int main(int argc, char *argv[]) {
             wattroff(win_title, COLOR_PAIR(CP_TITLE) | A_BOLD);
             wrefresh(win_title);
 
-            // --- Render Left Pane (Scrollable Drive List with Model / Serial) ---
+            // Render Frameless Help Bar on Bottom Line
+            wclear(win_help);
+            if (show_help) {
+                mvwprintw(win_help, 0, 0, "   Up/Down/PgUp/PgDn=Scroll Help | h or Esc=Return to Hex View");
+            } else {
+                mvwprintw(win_help, 0, 0, "   r=Reload | g=goto | s=search | e=entropy | h=Help | PgUp/PgDn=Scroll | q=Quit");
+            }
+            wrefresh(win_help);
+
+            redraw_left = 1;
+            redraw_right = 1;
+            redraw_all = 0;
+        }
+
+        if (redraw_left) {
+            // Render Left Pane (Scrollable Drive List with Model / Serial)
             wclear(win_left);
             wattron(win_left, COLOR_PAIR(CP_BORDER));
             box(win_left, 0, 0);
@@ -187,8 +204,11 @@ int main(int argc, char *argv[]) {
                 }
             }
             wrefresh(win_left);
+            redraw_left = 0;
+        }
 
-            // --- Render Right Pane (Help View or Dynamic Hex & ASCII View) ---
+        if (redraw_right) {
+            // Render Right Pane (Help View or Dynamic Hex & ASCII View)
             if (show_help) {
                 render_help_view(win_right, help_scroll_offset);
             } else if (drive_count > 0) {
@@ -201,29 +221,16 @@ int main(int argc, char *argv[]) {
                 mvwprintw(win_right, 1, 2, "No drive selected.");
                 wrefresh(win_right);
             }
-
-            // --- Render Frameless Help Bar on Bottom Line ---
-            wclear(win_help);
-            if (show_help) {
-                mvwprintw(win_help, 0, 0, "   Up/Down/PgUp/PgDn=Scroll Help | h or Esc=Return to Hex View");
-            } else {
-                mvwprintw(win_help, 0, 0, "   r=Reload | g=goto | s=search | e=entropy | h=Help | PgUp/PgDn=Scroll | q=Quit");
-            }
-            wrefresh(win_help);
-
-            redraw_needed = 0; // Reset flag after rendering completes
+            redraw_right = 0;
         }
 
         // --- Handle Input (Timed 250ms Poll) ---
         ch = wgetch(win_left);
 
-        // If no key was pressed within 250ms, wgetch returns ERR -> loop skips redrawing and continues polling
+        // If no key was pressed within 250ms, wgetch returns ERR -> loop skips and continues polling
         if (ch == ERR) {
             continue;
         }
-
-        // A key was pressed, so a screen redraw will be required for the next iteration
-        redraw_needed = 1;
 
         if (ch == KEY_RESIZE) {
             // Update terminal geometry
@@ -247,6 +254,8 @@ int main(int argc, char *argv[]) {
             keypad(win_left, TRUE);
             keypad(win_right, TRUE);
             wtimeout(win_left, 250);
+
+            redraw_all = 1;
             continue;
         }
 
@@ -264,21 +273,26 @@ int main(int argc, char *argv[]) {
             switch (ch) {
                 case KEY_UP:
                     if (help_scroll_offset > 0) help_scroll_offset--;
-                    break;
+                    redraw_right = 1;
+                break;
                 case KEY_DOWN:
                     help_scroll_offset++;
+                    redraw_right = 1;
                     break;
                 case KEY_PPAGE:
                     help_scroll_offset -= rows_visible;
                     if (help_scroll_offset < 0) help_scroll_offset = 0;
-                    break;
+                    redraw_right = 1;
+                break;
                 case KEY_NPAGE:
                     help_scroll_offset += rows_visible;
+                    redraw_right = 1;
                     break;
                 case 'h':
                 case 'H':
                 case 27: // ESC
                     show_help = 0;
+                    redraw_all = 1; // Redraw all to restore help bar and main hex view
                     break;
             }
             continue;
@@ -288,41 +302,52 @@ int main(int argc, char *argv[]) {
             case KEY_DOWN:
                 if (drive_count > 0 && selected_drive < drive_count - 1) {
                     selected_drive++;
+                    redraw_left = 1;
+                    redraw_right = 1;
                 }
                 break;
 
             case KEY_UP:
                 if (drive_count > 0 && selected_drive > 0) {
                     selected_drive--;
+                    redraw_left = 1;
+                    redraw_right = 1;
                 }
                 break;
 
             case KEY_NPAGE: // Page Down
                 if (drive_count > 0 && drives[selected_drive].offset + page_bytes < drives[selected_drive].size) {
                     drives[selected_drive].offset += page_bytes;
+                    redraw_right = 1;
                 }
                 break;
 
             case KEY_PPAGE: // Page Up
                 if (drive_count > 0 && drives[selected_drive].offset >= page_bytes) {
                     drives[selected_drive].offset -= page_bytes;
-                } else if (drive_count > 0) {
+                    redraw_right = 1;
+                } else if (drive_count > 0 && drives[selected_drive].offset > 0) {
                     drives[selected_drive].offset = 0;
+                    redraw_right = 1;
                 }
                 break;
 
             case '<': // Start of drive
-                if (drive_count > 0) {
+                if (drive_count > 0 && drives[selected_drive].offset > 0) {
                     drives[selected_drive].offset = 0;
+                    redraw_right = 1;
                 }
                 break;
 
             case '>': // End of drive
                 if (drive_count > 0) {
+                    off_t new_offset = 0;
                     if (drives[selected_drive].size > page_bytes) {
-                        drives[selected_drive].offset = drives[selected_drive].size - page_bytes;
-                    } else {
-                        drives[selected_drive].offset = 0;
+                        new_offset = drives[selected_drive].size - page_bytes;
+                    }
+                    if (drives[selected_drive].offset != new_offset) {
+                        drives[selected_drive].offset = new_offset;
+                        redraw_right = 1;
                     }
                 }
                 break;
@@ -331,6 +356,7 @@ int main(int argc, char *argv[]) {
             case 'G':
                 if (drive_count > 0) {
                     drives[selected_drive].offset = handle_goto_popup(&drives[selected_drive], dynamic_bpr);
+                    redraw_right = 1;
                 }
                 break;
 
@@ -338,6 +364,7 @@ int main(int argc, char *argv[]) {
             case 'S':
                 if (drive_count > 0) {
                     drives[selected_drive].offset = handle_random_search(&drives[selected_drive], dynamic_bpr);
+                    redraw_right = 1;
                 }
                 break;
 
@@ -345,6 +372,7 @@ int main(int argc, char *argv[]) {
             case 'E':
                 if (drive_count > 0) {
                     handle_entropy_menu(&drives[selected_drive], dynamic_bpr);
+                    redraw_right = 1;
                 }
                 break;
 
@@ -352,6 +380,7 @@ int main(int argc, char *argv[]) {
             case 'H':
                 show_help = 1;
                 help_scroll_offset = 0;
+                redraw_all = 1; // Redraw all to update help bar and show help view
                 break;
 
             case 'r':
@@ -389,6 +418,7 @@ int main(int argc, char *argv[]) {
                 if (drive_count > 0 && selected_drive >= drive_count) {
                     selected_drive = drive_count - 1;
                 }
+                redraw_all = 1;
             }
             break;
 
