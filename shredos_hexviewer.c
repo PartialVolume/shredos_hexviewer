@@ -159,9 +159,18 @@ int main(int argc, char *argv[]) {
                     mvwprintw(win_left, current_row, 1, " %-29s", drives[i].name);
                     current_row++;
 
-                    // Line 2: Model / Serial
+                    // Line 2: Model / Serial (Safely truncated to prevent border overlap/wrapping)
                     if (current_row < main_height - 1) {
-                        mvwprintw(win_left, current_row, 1, " %-29s", drives[i].model_serial);
+                        int max_len = left_width - 3; // Max interior columns
+                        char display_buf[128];
+                        snprintf(display_buf, sizeof(display_buf), "%s", drives[i].model_serial);
+
+                        if ((int)strlen(display_buf) > max_len) {
+                            display_buf[max_len - 3] = '\0';
+                            strcat(display_buf, "...");
+                        }
+
+                        mvwprintw(win_left, current_row, 1, " %-*s", max_len, display_buf);
                         current_row++;
                     }
 
