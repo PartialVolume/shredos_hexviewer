@@ -83,7 +83,8 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
         (void)bytes_read;
     }
 
-    wclear(win);
+    // NOTE: wclear() is intentionally omitted to eliminate screen flashing.
+    // We redraw the border box directly in-place.
     wattron(win, COLOR_PAIR(CP_BORDER));
     box(win, 0, 0);
     wattroff(win, COLOR_PAIR(CP_BORDER));
@@ -114,6 +115,9 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
                  (unsigned long)drive->offset);
     }
 
+    // Clear out the bottom border line area with spaces first to prevent text artifact overlap
+    mvwprintw(win, rows - 1, 2, "%-*s", cols - 4, "");
+
     wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
     mvwprintw(win, rows - 1, 2, "%s", bottom_str);
     wattroff(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
@@ -127,32 +131,38 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
         return;
     }
 
+    int inner_width = cols - 4; // Interior width for clearing empty rows
+
     for (int i = 0; i < display_rows; i++) {
         off_t row_addr = drive->offset + (i * bytes_per_row);
-        if (row_addr >= drive->size) break;
 
-        hex_buf[0] = '\0';
-        ascii_buf[0] = '\0';
+        if (row_addr < drive->size) {
+            hex_buf[0] = '\0';
+            ascii_buf[0] = '\0';
 
-        for (int j = 0; j < bytes_per_row; j++) {
-            int idx = (i * bytes_per_row) + j;
-            unsigned char c = buffer[idx];
-            char byte_str[4];
-            sprintf(byte_str, "%02X ", c);
-            strcat(hex_buf, byte_str);
+            for (int j = 0; j < bytes_per_row; j++) {
+                int idx = (i * bytes_per_row) + j;
+                unsigned char c = buffer[idx];
+                char byte_str[4];
+                sprintf(byte_str, "%02X ", c);
+                strcat(hex_buf, byte_str);
 
-            if (c >= 32 && c <= 126) {
-                sprintf(ascii_buf + strlen(ascii_buf), "%c", c);
-            } else {
-                strcat(ascii_buf, ".");
+                if (c >= 32 && c <= 126) {
+                    sprintf(ascii_buf + strlen(ascii_buf), "%c", c);
+                } else {
+                    strcat(ascii_buf, ".");
+                }
             }
-        }
 
-        mvwprintw(win, i + 1, 2, "%012llX:  %-*s   %s",
-                  (unsigned long long)row_addr,
-                  bytes_per_row * 3,
-                  hex_buf,
-                  ascii_buf);
+            mvwprintw(win, i + 1, 2, "%012llX:  %-*s   %s",
+                      (unsigned long long)row_addr,
+                      bytes_per_row * 3,
+                      hex_buf,
+                      ascii_buf);
+        } else {
+            // Past the end of the drive: overwrite row with spaces to clear stale text
+            mvwprintw(win, i + 1, 2, "%-*s", inner_width, "");
+        }
     }
 
     free(hex_buf);
