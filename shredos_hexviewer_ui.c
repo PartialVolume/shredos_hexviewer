@@ -32,7 +32,7 @@ int get_dynamic_bytes_per_row(WINDOW *win) {
 
 void show_message_popup(const char *title, const char *msg) {
     int h = 9;
-    int w = 66;
+    int w = 72;
     int y = (LINES - h) / 2;
     int x = (COLS - w) / 2;
     WINDOW *win = newwin(h, w, y, x);
@@ -64,6 +64,39 @@ void show_message_popup(const char *title, const char *msg) {
     touchwin(stdscr);
 }
 
+void format_human_size(off_t bytes, char *buf, size_t buf_size) {
+    double size = (double)bytes;
+    if (size >= 1000.0 * 1000.0 * 1000.0 * 1000.0) {
+        snprintf(buf, buf_size, "%.2f TB", size / (1000.0 * 1000.0 * 1000.0 * 1000.0));
+    } else if (size >= 1000.0 * 1000.0 * 1000.0) {
+        snprintf(buf, buf_size, "%.2f GB", size / (1000.0 * 1000.0 * 1000.0));
+    } else if (size >= 1000.0 * 1000.0) {
+        snprintf(buf, buf_size, "%.2f MB", size / (1000.0 * 1000.0));
+    } else if (size >= 1000.0) {
+        snprintf(buf, buf_size, "%.2f KB", size / 1000.0);
+    } else {
+        snprintf(buf, buf_size, "%llu B", (unsigned long long)bytes);
+    }
+}
+
+ssize_t safe_read(int fd, void *buf, size_t count, const char *dev_name, off_t offset) {
+    if (lseek(fd, offset, SEEK_SET) == (off_t)-1) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Seek Error on %s at offset 0x%012lX:\n%s (errno: %d)",
+                 dev_name, (unsigned long)offset, strerror(errno), errno);
+        show_message_popup("Hardware I/O Error", msg);
+        return -1;
+    }
+    ssize_t n = read(fd, buf, count);
+    if (n == -1) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Read Error on %s at offset 0x%012lX:\n%s (errno: %d)",
+                 dev_name, (unsigned long)offset, strerror(errno), errno);
+        show_message_popup("Hardware I/O Error", msg);
+    }
+    return n;
+}
+
 void render_hex_view(WINDOW *win, drive_info_t *drive) {
     int rows;
     int cols;
@@ -78,23 +111,18 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
     memset(buffer, 0, display_rows * bytes_per_row);
 
     if (drive->fd >= 0) {
-        lseek(drive->fd, drive->offset, SEEK_SET);
-        ssize_t bytes_read = read(drive->fd, buffer, display_rows * bytes_per_row);
+        ssize_t bytes_read = safe_read(drive->fd, buffer, display_rows * bytes_per_row, drive->name, drive->offset);
         (void)bytes_read;
     }
 
-    // NOTE: wclear() is intentionally omitted to eliminate screen flashing.
-    // We redraw the border box directly in-place.
     wattron(win, COLOR_PAIR(CP_BORDER));
     box(win, 0, 0);
     wattroff(win, COLOR_PAIR(CP_BORDER));
 
-    // Top Border Line: Device Name & Signature
     wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
     mvwprintw(win, 0, 2, " Hex View: %s [%s] ", drive->name, drive->signature);
     wattroff(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
 
-    // Bottom Border Line: Dynamic Block Number, Range, and Offset (adapts to width)
     unsigned long long block_no = (unsigned long long)(drive->offset / 512);
     unsigned long long block_start = block_no * 512;
     unsigned long long block_end = block_start + 511;
@@ -107,7 +135,7 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
                                   (unsigned long)block_end,
                                   (unsigned long)drive->offset);
 
-    int max_len = cols - 4; // Max width inside borders
+    int max_len = cols - 4;
     if (len_with_range > max_len) {
         snprintf(bottom_str, sizeof(bottom_str),
                  " Block: %llu | Offset: 0x%012lX ",
@@ -115,7 +143,6 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
                  (unsigned long)drive->offset);
     }
 
-    // Clear out the bottom border line area with spaces first to prevent text artifact overlap
     mvwprintw(win, rows - 1, 2, "%-*s", cols - 4, "");
 
     wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
@@ -131,7 +158,7 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
         return;
     }
 
-    int inner_width = cols - 4; // Interior width for clearing empty rows
+    int inner_width = cols - 4;
 
     for (int i = 0; i < display_rows; i++) {
         off_t row_addr = drive->offset + (i * bytes_per_row);
@@ -160,7 +187,6 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
                       hex_buf,
                       ascii_buf);
         } else {
-            // Past the end of the drive: overwrite row with spaces to clear stale text
             mvwprintw(win, i + 1, 2, "%-*s", inner_width, "");
         }
     }
@@ -239,14 +265,14 @@ void render_help_view(WINDOW *win, int scroll_offset) {
             "SEARCH SCOPE SYNTAX",
             {
                 {"Percentages", "1%, 50%, 100% (100%=Full Scan; <100%=1000-Chunk Scatter)"},
-                {"Byte Units", "500K, 100M, 8GB, 1TB"}
+                {"Byte Units", "500KB, 100MB, 8GB, 1TB"}
             },
             2
         }
     };
 
     typedef struct {
-        int type; // 0=blank, 1=header, 2=wide item, 3=narrow key, 4=narrow desc chunk
+        int type;
         char text1[64];
         char text2[128];
     } render_line_t;
@@ -256,11 +282,11 @@ void render_help_view(WINDOW *win, int scroll_offset) {
 
     for (int s = 0; s < 4; s++) {
         if (s > 0 && rline_count < 128) {
-            rlines[rline_count].type = 0; // blank
+            rlines[rline_count].type = 0;
             rline_count++;
         }
         if (rline_count < 128) {
-            rlines[rline_count].type = 1; // header
+            rlines[rline_count].type = 1;
             snprintf(rlines[rline_count].text1, sizeof(rlines[rline_count].text1), "[ %s ]", secs[s].title);
             rline_count++;
         }
@@ -269,15 +295,12 @@ void render_help_view(WINDOW *win, int scroll_offset) {
             const char *k = secs[s].items[i].key;
             const char *d = secs[s].items[i].desc;
 
-            // Breakpoint at 87 inner width (corresponds to 123 terminal columns)
             if (inner_width >= 87) {
-                // Wide mode: single line
                 rlines[rline_count].type = 2;
                 snprintf(rlines[rline_count].text1, sizeof(rlines[rline_count].text1), "%s", k);
                 snprintf(rlines[rline_count].text2, sizeof(rlines[rline_count].text2), "%s", d);
                 rline_count++;
             } else {
-                // Narrow mode (< 123 columns): Key on line 1, wrapped description on line(s) 2+
                 rlines[rline_count].type = 3;
                 snprintf(rlines[rline_count].text1, sizeof(rlines[rline_count].text1), "%s", k);
                 rline_count++;
