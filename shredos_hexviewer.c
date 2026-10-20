@@ -134,6 +134,11 @@ int main(int argc, char *argv[]) {
             redraw_all = 0;
         }
 
+        // Ensure left pane refreshes whenever the right pane is refreshed
+        if (redraw_right) {
+            redraw_left = 1;
+        }
+
         if (redraw_left) {
             // Render Left Pane (Scrollable Drive List with Model / Serial)
             wclear(win_left);
