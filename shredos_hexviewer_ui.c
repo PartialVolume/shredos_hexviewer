@@ -115,9 +115,7 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
         (void)bytes_read;
     }
 
-    wattron(win, COLOR_PAIR(CP_BORDER));
-    box(win, 0, 0);
-    wattroff(win, COLOR_PAIR(CP_BORDER));
+    // NOTE: Removed box(win, 0, 0) here so borders are static and don't flicker on scroll!
 
     wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
     mvwprintw(win, 0, 2, " Hex View: %s [%s] ", drive->name, drive->signature);
