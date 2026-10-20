@@ -142,7 +142,7 @@ int main(int argc, char *argv[]) {
             if (show_help) {
                 mvwprintw(win_help, 0, 0, "   Up/Down/PgUp/PgDn=Scroll Help | h or Esc=Return to Hex View");
             } else {
-                mvwprintw(win_help, 0, 0, "   r=Reload | g=goto | s=search | e=entropy | h=Help | PgUp/PgDn=Scroll | q=Quit");
+                mvwprintw(win_help, 0, 0, "   Up/Dn=Drive | Pg=Scroll | g=Goto | s=Search | e=Entropy | h=Help | q=Quit");
             }
             wrefresh(win_help);
 
