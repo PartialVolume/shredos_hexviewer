@@ -79,6 +79,21 @@ void format_human_size(off_t bytes, char *buf, size_t buf_size) {
     }
 }
 
+void format_compact_size(off_t bytes, char *buf, size_t buf_size) {
+    double size = (double)bytes;
+    if (size >= 1000.0 * 1000.0 * 1000.0 * 1000.0) {
+        snprintf(buf, buf_size, "%.1fTB", size / (1000.0 * 1000.0 * 1000.0 * 1000.0));
+    } else if (size >= 1000.0 * 1000.0 * 1000.0) {
+        snprintf(buf, buf_size, "%.1fGB", size / (1000.0 * 1000.0 * 1000.0));
+    } else if (size >= 1000.0 * 1000.0) {
+        snprintf(buf, buf_size, "%.1fMB", size / (1000.0 * 1000.0));
+    } else if (size >= 1000.0) {
+        snprintf(buf, buf_size, "%.1fKB", size / 1000.0);
+    } else {
+        snprintf(buf, buf_size, "%lluB", (unsigned long long)bytes);
+    }
+}
+
 ssize_t safe_read(int fd, void *buf, size_t count, const char *dev_name, off_t offset) {
     if (lseek(fd, offset, SEEK_SET) == (off_t)-1) {
         char msg[256];

@@ -78,6 +78,7 @@ off_t execute_entropy_outlier_search(drive_info_t *drive, int bytes_per_row, dou
 off_t execute_phrase_text_search(drive_info_t *drive, int bytes_per_row, int min_word_size, unsigned long long target_bytes, int is_full_scan, off_t start_offset, int is_find_next);
 void show_message_popup(const char *title, const char *msg);
 void format_human_size(off_t bytes, char *buf, size_t buf_size);
+void format_compact_size(off_t bytes, char *buf, size_t buf_size);
 int parse_hex_pattern(const char *str, search_pattern_element_t *pattern, int max_len);
 int parse_ascii_pattern(const char *str, unsigned char *buf, int max_len, int case_insensitive);
 int is_valid_word(const unsigned char *word_buf, int len);

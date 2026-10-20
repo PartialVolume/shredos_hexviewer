@@ -201,8 +201,12 @@ int main(int argc, char *argv[]) {
                         wattron(win_left, A_REVERSE);
                     }
 
-                    // Line 1: Device Name (e.g. sda)
-                    mvwprintw(win_left, current_row, 1, " %-29s", drives[i].name);
+                    // Line 1: Device Name & Capacity (e.g. sdb (1.8GB))
+                    char size_buf[32];
+                    format_compact_size(drives[i].size, size_buf, sizeof(size_buf));
+                    char line1_buf[64];
+                    snprintf(line1_buf, sizeof(line1_buf), "%s (%s)", drives[i].name, size_buf);
+                    mvwprintw(win_left, current_row, 1, " %-29s", line1_buf);
                     current_row++;
 
                     // Line 2: Model / Serial (Safely truncated to prevent border overlap/wrapping)
