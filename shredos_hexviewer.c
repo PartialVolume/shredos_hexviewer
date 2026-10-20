@@ -108,6 +108,7 @@ int main(int argc, char *argv[]) {
         }
 
         // --- Selective UI Rendering ---
+        // --- Selective UI Rendering ---
         if (redraw_all) {
             // Render Top Title Box
             wclear(win_title);
@@ -119,6 +120,21 @@ int main(int argc, char *argv[]) {
             mvwprintw(win_title, 1, 2, " shredos_hexviewer v1.5");
             wattroff(win_title, COLOR_PAIR(CP_TITLE) | A_BOLD);
             wrefresh(win_title);
+
+            // Draw Left Pane Border ONCE on startup/resize
+            wclear(win_left);
+            wattron(win_left, COLOR_PAIR(CP_BORDER));
+            box(win_left, 0, 0);
+            wattroff(win_left, COLOR_PAIR(CP_BORDER));
+            wattron(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
+            mvwprintw(win_left, 0, 2, " Devices ");
+            wattroff(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
+
+            // Draw Right Pane Border ONCE on startup/resize
+            wclear(win_right);
+            wattron(win_right, COLOR_PAIR(CP_BORDER));
+            box(win_right, 0, 0);
+            wattroff(win_right, COLOR_PAIR(CP_BORDER));
 
             // Render Frameless Help Bar on Bottom Line
             wclear(win_help);
@@ -134,21 +150,15 @@ int main(int argc, char *argv[]) {
             redraw_all = 0;
         }
 
-        // Ensure left pane refreshes whenever the right pane is refreshed
         if (redraw_right) {
             redraw_left = 1;
         }
 
         if (redraw_left) {
-            // Render Left Pane (Scrollable Drive List with Model / Serial)
-            wclear(win_left);
-            wattron(win_left, COLOR_PAIR(CP_BORDER));
-            box(win_left, 0, 0);
-            wattroff(win_left, COLOR_PAIR(CP_BORDER));
-
-            wattron(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
-            mvwprintw(win_left, 0, 2, " Devices ");
-            wattroff(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
+            // Clear ONLY the inner content area of the left pane (leaves border intact)
+            for (int r = 1; r < main_height - 1; r++) {
+                mvwprintw(win_left, r, 1, "%-*s", left_width - 2, "");
+            }
 
             // Calculate how many drive items (2 lines each) fit in the left pane
             int visible_slots = (main_height - 2) / 2;
@@ -166,6 +176,9 @@ int main(int argc, char *argv[]) {
                 wattron(win_left, COLOR_PAIR(CP_TITLE));
                 mvwprintw(win_left, 0, 11, "(More ^)");
                 wattroff(win_left, COLOR_PAIR(CP_TITLE));
+            } else {
+                // Clear top border title area if no indicator
+                mvwprintw(win_left, 0, 11, "         ");
             }
 
             if (drive_count == 0) {
