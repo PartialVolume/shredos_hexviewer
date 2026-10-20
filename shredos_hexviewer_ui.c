@@ -179,13 +179,15 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
                 }
             }
 
-            mvwprintw(win, i + 1, 2, "%012llX:  %-*s   %s",
+            // START AT COLUMN 1 with a leading space to overwrite column 1 padding!
+            mvwprintw(win, i + 1, 1, " %012llX:  %-*s   %s",
                       (unsigned long long)row_addr,
                       bytes_per_row * 3,
                       hex_buf,
                       ascii_buf);
         } else {
-            mvwprintw(win, i + 1, 2, "%-*s", inner_width, "");
+            // Clear past end of drive starting at column 1
+            mvwprintw(win, i + 1, 1, " %-*s", inner_width, "");
         }
     }
 
