@@ -57,6 +57,7 @@ int main(int argc, char *argv[]) {
     int redraw_all = 1;   // Force initial full draw on startup
     int redraw_left = 0;
     int redraw_right = 0;
+    int redraw_borders = 0; // Selectively redraw pane borders after popups
 
     while (running) {
         // --- Throttled Hot-Plug Check (Runs every 1 second max, only if drives changed) ---
@@ -155,7 +156,17 @@ int main(int argc, char *argv[]) {
         }
 
         if (redraw_left) {
-            // Clear ONLY the inner content area of the left pane (leaves border intact)
+            if (redraw_borders) {
+                // Redraw Left Pane Border & Title only when needed (e.g. after popup)
+                wattron(win_left, COLOR_PAIR(CP_BORDER));
+                box(win_left, 0, 0);
+                wattroff(win_left, COLOR_PAIR(CP_BORDER));
+                wattron(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
+                mvwprintw(win_left, 0, 2, " Devices ");
+                wattroff(win_left, COLOR_PAIR(CP_TITLE) | A_BOLD);
+            }
+
+            // Clear ONLY the inner content area of the left pane
             for (int r = 1; r < main_height - 1; r++) {
                 mvwprintw(win_left, r, 1, "%-*s", left_width - 2, "");
             }
@@ -226,6 +237,13 @@ int main(int argc, char *argv[]) {
         }
 
         if (redraw_right) {
+            if (redraw_borders) {
+                // Redraw Right Pane Border only when needed (e.g. after popup)
+                wattron(win_right, COLOR_PAIR(CP_BORDER));
+                box(win_right, 0, 0);
+                wattroff(win_right, COLOR_PAIR(CP_BORDER));
+            }
+
             // Render Right Pane (Help View or Dynamic Hex & ASCII View)
             if (show_help) {
                 render_help_view(win_right, help_scroll_offset);
@@ -233,13 +251,16 @@ int main(int argc, char *argv[]) {
                 render_hex_view(win_right, &drives[selected_drive]);
             } else {
                 wclear(win_right);
-                wattron(win_right, COLOR_PAIR(CP_BORDER));
-                box(win_right, 0, 0);
-                wattroff(win_right, COLOR_PAIR(CP_BORDER));
+                if (redraw_borders) {
+                    wattron(win_right, COLOR_PAIR(CP_BORDER));
+                    box(win_right, 0, 0);
+                    wattroff(win_right, COLOR_PAIR(CP_BORDER));
+                }
                 mvwprintw(win_right, 1, 2, "No drive selected.");
                 wrefresh(win_right);
             }
             redraw_right = 0;
+            redraw_borders = 0; // Reset border flag
         }
 
         // --- Handle Input (Timed 250ms Poll) ---
@@ -374,7 +395,9 @@ int main(int argc, char *argv[]) {
             case 'G':
                 if (drive_count > 0) {
                     drives[selected_drive].offset = handle_goto_popup(&drives[selected_drive], dynamic_bpr);
+                    redraw_left = 1;
                     redraw_right = 1;
+                    redraw_borders = 1; // Repaint pane borders + contents only
                 }
                 break;
 
@@ -382,7 +405,9 @@ int main(int argc, char *argv[]) {
             case 'S':
                 if (drive_count > 0) {
                     drives[selected_drive].offset = handle_random_search(&drives[selected_drive], dynamic_bpr);
+                    redraw_left = 1;
                     redraw_right = 1;
+                    redraw_borders = 1; // Repaint pane borders + contents only
                 }
                 break;
 
@@ -390,7 +415,9 @@ int main(int argc, char *argv[]) {
             case 'E':
                 if (drive_count > 0) {
                     handle_entropy_menu(&drives[selected_drive], dynamic_bpr);
+                    redraw_left = 1;
                     redraw_right = 1;
+                    redraw_borders = 1; // Repaint pane borders + contents only
                 }
                 break;
 
