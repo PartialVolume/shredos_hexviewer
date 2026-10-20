@@ -220,10 +220,7 @@ void render_help_view(WINDOW *win, int scroll_offset) {
     int inner_width = cols - 4;
     if (inner_width < 20) inner_width = 20;
 
-    wclear(win);
-    wattron(win, COLOR_PAIR(CP_BORDER));
-    box(win, 0, 0);
-    wattroff(win, COLOR_PAIR(CP_BORDER));
+    // NOTE: Removed wclear(win) and box(win, 0, 0) here so the border is static and doesn't flash on scroll!
 
     wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
     mvwprintw(win, 0, 2, " Help & Reference (Press 'h' or Esc to Exit) ");
@@ -359,6 +356,11 @@ void render_help_view(WINDOW *win, int scroll_offset) {
         if (scroll_offset < 0) scroll_offset = 0;
     }
 
+    // Clear interior rows cleanly before rewriting
+    for (int i = 0; i < display_rows; i++) {
+        mvwprintw(win, i + 1, 1, " %-*s", inner_width, "");
+    }
+
     for (int i = 0; i < display_rows; i++) {
         int idx = scroll_offset + i;
         if (idx >= rline_count) break;
@@ -390,6 +392,8 @@ void render_help_view(WINDOW *win, int scroll_offset) {
         }
     }
 
+    // Clear and update bottom scroll indicator line
+    mvwprintw(win, rows - 1, 1, " %-*s", inner_width, "");
     if (rline_count > display_rows) {
         wattron(win, COLOR_PAIR(CP_TITLE));
         mvwprintw(win, rows - 1, cols - 18, "[Scroll: Up/Dn]");
