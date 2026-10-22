@@ -39,8 +39,7 @@ sudo dnf install -y \
 make
 ```
 ## Main Screen
-<img width="994" height="434" alt="Screenshot_20261018_214843" src="https://github.com/user-attachments/assets/bbea85e6-5660-4e14-b7f9-b803a587fe00" />
-
+<img width="964" height="395" alt="Screenshot_20261022_212345" src="https://github.com/user-attachments/assets/f052501a-24af-4f36-9e19-b0588adb7421" />
 
 ## Application Layout & Navigation
 The interface is divided into three primary regions:
@@ -62,8 +61,7 @@ The interface is divided into three primary regions:
 | q / Q | Quit application
 
 ## Search Functionality (s)
-<img width="994" height="434" alt="Screenshot_20261018_215014" src="https://github.com/user-attachments/assets/045b7af7-4c16-4469-ae24-1502ab0d7810" />
-
+<img width="964" height="395" alt="Screenshot_20261022_212634" src="https://github.com/user-attachments/assets/63ba7b67-9221-44eb-9c94-063811e091b8" />
 
 The search engine allows scanning raw disk sectors using both targeted patterns and flexible sampling scopes.
 
@@ -83,11 +81,11 @@ When prompted for a search scope:
 - <100% (1000-Chunk Scatter Scan): Divides the target range into 1,000 equal segments and scans them in pseudo-random order. This allows sampling terabytes of drive space in seconds to detect residual data across the disk surface.
 - Custom Units: Supports ranges like 50%, 500M, 8GB, or 2TB.
 
-<img width="994" height="434" alt="Screenshot_20261018_222045" src="https://github.com/user-attachments/assets/6885408e-8d59-4c6a-b0c2-0a532dc92262" />
+<img width="964" height="395" alt="Screenshot_20261022_212810" src="https://github.com/user-attachments/assets/2a60d514-0c7e-49ef-9534-4cd4d3bc8e83" />
 
 
 ## Goto - by disc percentage, byte offset or block (LBA)
-<img width="994" height="434" alt="Screenshot_20261018_215111" src="https://github.com/user-attachments/assets/3b4035b4-9104-4a01-a546-1855dc7632b6" />
+<img width="964" height="395" alt="Screenshot_20261022_212855" src="https://github.com/user-attachments/assets/c3a99d33-a478-4f10-bc3f-dda5ab2249dc" />
 
 
 ## Entropy Theory & Advanced Checks (e)
@@ -97,7 +95,7 @@ Information entropy measures the degree of randomness or unpredictability in a s
 
 <img width="304" height="92" alt="Screenshot_20261018_205619" src="https://github.com/user-attachments/assets/0705cfe0-1f83-4dce-a3f9-22e582137b31" />
 
-<img width="994" height="434" alt="Screenshot_20261018_215529" src="https://github.com/user-attachments/assets/5eff9456-5193-490c-8824-859f1cd30a53" />
+<img width="964" height="395" alt="Screenshot_20261022_212952" src="https://github.com/user-attachments/assets/bf72d4c0-7271-4b08-a50a-3073bd065b46" />
 
 
 ### What the Shannon score means:
@@ -116,7 +114,7 @@ Represents the probability (relative frequency) of byte value occurring within t
 ⚠️ **Critical Caution on Entropy Scans:**
 Shannon entropy (whether global or block-by-block) measures statistical randomness, not semantics. An entropy scan will not flag a small snippet of plain text (such as "How now brown cow") if it resides inside a 512-byte block alongside random or high-entropy data. Because the surrounding bytes maintain a high-entropy distribution, the block's overall score remains high, masking the text. To locate human-readable strings hidden amongst random or wiped data, always use the Multi-Word Phrase Search or ASCII Pattern Search instead.
 
-<img width="994" height="434" alt="Screenshot_20261018_215722" src="https://github.com/user-attachments/assets/834f5ec2-0eed-454e-8e44-6c24f68fb696" />
+<img width="964" height="395" alt="Screenshot_20261022_213204" src="https://github.com/user-attachments/assets/39f7d174-24af-4129-ab49-08c3333f0264" />
 
 
 ## Partition and Filesystem Signature Detection
@@ -139,7 +137,9 @@ The underlying signature detection mechanism relies on specific low-level byte p
   - ISO9660: Performs a targeted read at byte offset 32,768 (the 32KB mark) to locate optical disc "CD001" formatting.
 
   - Raw / Unknown: If no known partition table, boot sector signature, or filesystem magic header is matched, it defaults to labeling the storage as Raw or Raw / Unknown.
-<img width="994" height="434" alt="Screenshot_20261018_215916" src="https://github.com/user-attachments/assets/489494ab-bf19-4178-97a7-3d0335073fba" />
+
+<img width="963" height="398" alt="Screenshot_20261022_213613" src="https://github.com/user-attachments/assets/df7ce0b8-c2ff-443e-9ed8-725beca9a751" />
+
 
 
 
