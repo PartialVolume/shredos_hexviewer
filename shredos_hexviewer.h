@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <linux/fs.h>
 #include <ncurses.h>
+#include <locale.h>
 #include <time.h>
 #include <sys/types.h>
 #include <ctype.h>
@@ -40,6 +41,12 @@ typedef struct {
 } search_pattern_element_t;
 
 typedef struct {
+    char name[128];     // e.g., "sdb1"
+    char fs_type[16];   // e.g., "ext4", "FAT32", "swap"
+    uint64_t size;      // Partition size in bytes
+} partition_info_t;
+
+typedef struct {
     char name[64];
     char path[MAX_PATH];
     char model_serial[128];
@@ -47,6 +54,11 @@ typedef struct {
     int fd;
     off_t size;
     off_t offset;
+
+    // Partition hierarchy fields
+    partition_info_t partitions[16];
+    int partition_count;
+
     // Persistent search state for "Find Next" (n = next)
     int last_search_valid;
     search_type_t last_search_type;
