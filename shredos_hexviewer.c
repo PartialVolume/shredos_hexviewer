@@ -1,8 +1,20 @@
 #include "shredos_hexviewer.h"
 
 int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
+    int opt;
+    int quiet_mode = 0;
+
+    // Parse command line arguments
+    while ((opt = getopt(argc, argv, "q")) != -1) {
+        switch (opt) {
+            case 'q':
+                quiet_mode = 1;
+                break;
+            default:
+                fprintf(stderr, "Usage: %s [-q]\n", argv[0]);
+                return 1;
+        }
+    }
 
     drive_info_t drives[64];
     int drive_count = 0;
@@ -27,7 +39,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Initial drive discovery
-    drive_count = get_drive_list(drives, 64);
+    drive_count = get_drive_list(drives, 64, quiet_mode);
 
     struct timespec last_hotplug_check;
     clock_gettime(CLOCK_MONOTONIC, &last_hotplug_check);
@@ -79,7 +91,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 close_drives(drives, drive_count);
-                drive_count = get_drive_list(drives, 64);
+                drive_count = get_drive_list(drives, 64, quiet_mode);
 
                 int found_sel = 0;
                 if (strlen(selected_name) > 0) {
@@ -483,7 +495,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 close_drives(drives, drive_count);
-                drive_count = get_drive_list(drives, 64);
+                drive_count = get_drive_list(drives, 64, quiet_mode);
 
                 int found_sel = 0;
                 if (strlen(selected_name) > 0) {

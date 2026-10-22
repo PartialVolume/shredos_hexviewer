@@ -72,10 +72,10 @@ typedef struct {
 
 // Function declarations
 void init_ncurses_ui(void);
-void get_model_and_serial(const char *dev_name, char *dest, size_t max_len);
+void get_model_and_serial(const char *dev_name, char *dest, size_t max_len, int quiet);
 void detect_drive_signature(drive_info_t *drive);
 int check_drives_changed(drive_info_t drives[], int drive_count);
-int get_drive_list(drive_info_t drives[], int max_drives);
+int get_drive_list(drive_info_t drives[], int max_drives, int quiet);
 void close_drives(drive_info_t drives[], int count);
 void render_hex_view(WINDOW *win, drive_info_t *drive);
 void render_help_view(WINDOW *win, int scroll_offset);
