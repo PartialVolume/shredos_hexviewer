@@ -243,7 +243,7 @@ int main(int argc, char *argv[]) {
                         current_row++;
                     }
 
-                    // Lines 3+: Partition Tree Nodes with precise column-based padding
+                    // Lines 3+: Partition Tree Nodes using ncurses ACS macros for universal compatibility
                     for (int p = 0; p < drives[i].partition_count && (current_row < main_height - 1); p++) {
                         char part_cap[32];
                         format_compact_size(drives[i].partitions[p].size, part_cap, sizeof(part_cap));
@@ -254,7 +254,7 @@ int main(int argc, char *argv[]) {
                                  drives[i].partitions[p].fs_type,
                                  part_cap);
 
-                        int prefix_cols = 5; // "  └─ " takes 5 display columns
+                        int prefix_cols = 5; // "  [ACS] " takes 5 display columns
                         int total_cols = prefix_cols + (int)strlen(var_part);
                         int padding = inner_w - total_cols;
                         if (padding < 0) {
@@ -266,7 +266,11 @@ int main(int argc, char *argv[]) {
                             padding = 0;
                         }
 
-                        mvwprintw(win_left, current_row, 1, "  └─ %s%*s", var_part, padding, "");
+                        // Print indent & use ncurses ACS line drawing characters
+                        mvwprintw(win_left, current_row, 1, "  ");
+                        waddch(win_left, ACS_LLCORNER);
+                        waddch(win_left, ACS_HLINE);
+                        wprintw(win_left, " %s%*s", var_part, padding, "");
                         current_row++;
                     }
 
@@ -387,6 +391,7 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
+        // --- Switch input handling ---
         switch (ch) {
             case KEY_DOWN:
                 if (drive_count > 0 && selected_drive < drive_count - 1) {
