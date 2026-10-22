@@ -1,6 +1,6 @@
 #include "shredos_hexviewer.h"
 
-void get_model_and_serial(const char *dev_name, char *dest, size_t max_len) {
+void get_model_and_serial(const char *dev_name, char *dest, size_t max_len, int quiet) {
     char model[64] = "UnknownModel";
     char serial[64] = "UnknownSerial";
     char path[MAX_PATH];
@@ -47,6 +47,12 @@ void get_model_and_serial(const char *dev_name, char *dest, size_t max_len) {
     // Trim trailing whitespace
     for (int i = strlen(model) - 1; i >= 0 && model[i] == ' '; i--) model[i] = '\0';
     for (int i = strlen(serial) - 1; i >= 0 && serial[i] == ' '; i--) serial[i] = '\0';
+
+    if (quiet) {
+        for (int i = 0; serial[i] != '\0'; i++) {
+            serial[i] = 'x';
+        }
+    }
 
     snprintf(dest, max_len, "%s / %s", model, serial);
 }
@@ -116,7 +122,6 @@ static int parse_mbr_entries(int fd, mbr_entry_info_t *entries, int max_entries)
         uint32_t start_lba = *(uint32_t *)&sector[offset + 8];
         uint32_t sectors   = *(uint32_t *)&sector[offset + 12];
 
-        // Skip truly unused slots where sector count is 0
         if (sectors == 0) continue;
 
         entries[count].start_lba = start_lba;
@@ -168,7 +173,7 @@ void detect_drive_signature(drive_info_t *drive) {
         return;
     }
 
-    // 1. Validate GPT signature ("EFI PART" at LBA 1 / offset 512) with protective MBR check
+    // 1. Validate GPT signature
     int has_protective_mbr = (sector_buf[450] == 0xEE);
     int is_gpt = (n >= 1024 && memcmp(sector_buf + 512, "EFI PART", 8) == 0 && has_protective_mbr);
 
@@ -344,7 +349,7 @@ int check_drives_changed(drive_info_t drives[], int drive_count) {
     return 0;
 }
 
-int get_drive_list(drive_info_t drives[], int max_drives) {
+int get_drive_list(drive_info_t drives[], int max_drives, int quiet) {
     DIR *dir = opendir("/sys/block");
     if (!dir) return 0;
 
@@ -381,7 +386,7 @@ int get_drive_list(drive_info_t drives[], int max_drives) {
         drives[count].fd = fd;
         drives[count].last_search_valid = 0;
 
-        get_model_and_serial(entry->d_name, drives[count].model_serial, sizeof(drives[count].model_serial));
+        get_model_and_serial(entry->d_name, drives[count].model_serial, sizeof(drives[count].model_serial), quiet);
         detect_drive_signature(&drives[count]);
 
         if (ioctl(fd, BLKGETSIZE64, &drives[count].size) < 0) {
