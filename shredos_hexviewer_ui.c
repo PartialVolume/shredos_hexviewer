@@ -1,6 +1,7 @@
 #include "shredos_hexviewer.h"
 
 void init_ncurses_ui(void) {
+    setlocale(LC_ALL, ""); // Required for ncursesw to properly render UTF-8 box-drawing characters
     initscr();
     cbreak();
     noecho();
@@ -130,8 +131,6 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
         (void)bytes_read;
     }
 
-    // NOTE: Removed box(win, 0, 0) here so borders are static and don't flicker on scroll!
-
     wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
     mvwprintw(win, 0, 2, " Hex View: %s [%s] ", drive->name, drive->signature);
     wattroff(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
@@ -194,14 +193,12 @@ void render_hex_view(WINDOW *win, drive_info_t *drive) {
                 }
             }
 
-            // START AT COLUMN 1 with a leading space to overwrite column 1 padding!
             mvwprintw(win, i + 1, 1, " %012llX:  %-*s   %s",
                       (unsigned long long)row_addr,
                       bytes_per_row * 3,
                       hex_buf,
                       ascii_buf);
         } else {
-            // Clear past end of drive starting at column 1
             mvwprintw(win, i + 1, 1, " %-*s", inner_width, "");
         }
     }
@@ -219,8 +216,6 @@ void render_help_view(WINDOW *win, int scroll_offset) {
     if (display_rows < 1) display_rows = 1;
     int inner_width = cols - 4;
     if (inner_width < 20) inner_width = 20;
-
-    // NOTE: Removed wclear(win) and box(win, 0, 0) here so the border is static and doesn't flash on scroll!
 
     wattron(win, COLOR_PAIR(CP_TITLE) | A_BOLD);
     mvwprintw(win, 0, 2, " Help & Reference (Press 'h' or Esc to Exit) ");
@@ -356,7 +351,6 @@ void render_help_view(WINDOW *win, int scroll_offset) {
         if (scroll_offset < 0) scroll_offset = 0;
     }
 
-    // Clear interior rows cleanly before rewriting
     for (int i = 0; i < display_rows; i++) {
         mvwprintw(win, i + 1, 1, " %-*s", inner_width, "");
     }
@@ -392,7 +386,6 @@ void render_help_view(WINDOW *win, int scroll_offset) {
         }
     }
 
-    // Clear and update bottom scroll indicator line
     mvwprintw(win, rows - 1, 1, " %-*s", inner_width, "");
     if (rline_count > display_rows) {
         wattron(win, COLOR_PAIR(CP_TITLE));

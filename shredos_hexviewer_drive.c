@@ -51,18 +51,24 @@ void get_model_and_serial(const char *dev_name, char *dest, size_t max_len) {
     snprintf(dest, max_len, "%s / %s", model, serial);
 }
 
-// Helper structure to track parsed GPT partitions
+// Helper structures for partition parsing
 typedef struct {
     uint64_t start_lba;
     uint64_t end_lba;
 } gpt_entry_info_t;
+
+typedef struct {
+    uint32_t start_lba;
+    uint32_t sector_count;
+    unsigned char type;
+} mbr_entry_info_t;
 
 static int parse_gpt_entries(int fd, gpt_entry_info_t *entries, int max_entries) {
     unsigned char header_buf[512];
     if (lseek(fd, 512, SEEK_SET) != 512) return 0;
     if (read(fd, header_buf, 512) != 512) return 0;
 
-    if (memcmp(header_buf, "EFI PART", 8) != 0) return 0; // Not GPT
+    if (memcmp(header_buf, "EFI PART", 8) != 0) return 0;
 
     uint32_t partition_entries_lba = *(uint32_t *)&header_buf[72];
     uint32_t num_entries           = *(uint32_t *)&header_buf[80];
@@ -80,7 +86,6 @@ static int parse_gpt_entries(int fd, gpt_entry_info_t *entries, int max_entries)
         if (lseek(fd, e_off, SEEK_SET) != e_off) break;
         if (read(fd, entry_buf, 128) != 128) break;
 
-        // Check type GUID (bytes 0-15). All zeros means unused slot.
         uint64_t g1 = *(uint64_t *)&entry_buf[0];
         uint64_t g2 = *(uint64_t *)&entry_buf[8];
         if (g1 == 0 && g2 == 0) continue;
@@ -97,19 +102,43 @@ static int parse_gpt_entries(int fd, gpt_entry_info_t *entries, int max_entries)
     return count;
 }
 
+static int parse_mbr_entries(int fd, mbr_entry_info_t *entries, int max_entries) {
+    unsigned char sector[512];
+    if (lseek(fd, 0, SEEK_SET) != 0) return 0;
+    if (read(fd, sector, 512) != 512) return 0;
+
+    if (sector[510] != 0x55 || sector[511] != 0xAA) return 0;
+
+    int count = 0;
+    for (int i = 0; i < 4 && count < max_entries; i++) {
+        int offset = 446 + (i * 16);
+        unsigned char type = sector[offset + 4];
+        uint32_t start_lba = *(uint32_t *)&sector[offset + 8];
+        uint32_t sectors   = *(uint32_t *)&sector[offset + 12];
+
+        // Skip truly unused slots where sector count is 0
+        if (sectors == 0) continue;
+
+        entries[count].start_lba = start_lba;
+        entries[count].sector_count = sectors;
+        entries[count].type = type;
+        count++;
+    }
+    return count;
+}
+
 static const char* probe_filesystem_at_offset(int fd, off_t base_offset) {
     unsigned char sector[1024];
 
-    // Check Sector 0 of partition / image
     if (lseek(fd, base_offset, SEEK_SET) == base_offset) {
         if (read(fd, sector, 512) == 512) {
             if (memcmp(sector + 3, "NTFS    ", 8) == 0) return "NTFS";
             if (memcmp(sector + 0x52, "FAT32   ", 8) == 0) return "FAT32";
             if (memcmp(sector + 0x26, "FAT", 3) == 0) return "FAT";
+            if (memcmp(sector + 1, "CD001", 5) == 0) return "ISO9660";
         }
     }
 
-    // Check ext2/3/4 superblock (1024 bytes offset from partition start)
     if (lseek(fd, base_offset + 1024, SEEK_SET) == (base_offset + 1024)) {
         if (read(fd, sector, 512) == 512) {
             if (sector[56] == 0x53 && sector[57] == 0xEF) {
@@ -122,6 +151,8 @@ static const char* probe_filesystem_at_offset(int fd, off_t base_offset) {
 }
 
 void detect_drive_signature(drive_info_t *drive) {
+    drive->partition_count = 0;
+
     if (drive->fd < 0) {
         snprintf(drive->signature, sizeof(drive->signature), "Unknown");
         return;
@@ -137,24 +168,43 @@ void detect_drive_signature(drive_info_t *drive) {
         return;
     }
 
-    // 1. Check GPT signature ("EFI PART" at LBA 1 / offset 512)
-    int is_gpt = (n >= 1024 && memcmp(sector_buf + 512, "EFI PART", 8) == 0);
+    // 1. Validate GPT signature ("EFI PART" at LBA 1 / offset 512) with protective MBR check
+    int has_protective_mbr = (sector_buf[450] == 0xEE);
+    int is_gpt = (n >= 1024 && memcmp(sector_buf + 512, "EFI PART", 8) == 0 && has_protective_mbr);
+
     if (is_gpt) {
-        gpt_entry_info_t gpt_parts[8];
-        int part_count = parse_gpt_entries(drive->fd, gpt_parts, 8);
+        gpt_entry_info_t gpt_parts[16];
+        int part_count = parse_gpt_entries(drive->fd, gpt_parts, 16);
 
         char found_fs[4][16];
         int fs_count = 0;
 
-        for (int p = 0; p < part_count && fs_count < 4; p++) {
+        for (int p = 0; p < part_count && drive->partition_count < 16; p++) {
             off_t part_offset = (off_t)gpt_parts[p].start_lba * 512;
+            uint64_t part_size = (gpt_parts[p].end_lba >= gpt_parts[p].start_lba) ?
+            (gpt_parts[p].end_lba - gpt_parts[p].start_lba + 1) * 512 : 0;
+
             const char *fs = probe_filesystem_at_offset(drive->fd, part_offset);
+
+            char dev_base[64];
+            snprintf(dev_base, sizeof(dev_base), "%.63s", drive->name);
+
+            snprintf(drive->partitions[drive->partition_count].name,
+                     sizeof(drive->partitions[drive->partition_count].name),
+                     "%.48s%d", dev_base, drive->partition_count + 1);
+            drive->partitions[drive->partition_count].size = part_size;
+            snprintf(drive->partitions[drive->partition_count].fs_type,
+                     sizeof(drive->partitions[drive->partition_count].fs_type),
+                     "%s", fs ? fs : "Unknown");
+
+            drive->partition_count++;
+
             if (fs) {
                 int exists = 0;
                 for (int k = 0; k < fs_count; k++) {
                     if (strcmp(found_fs[k], fs) == 0) { exists = 1; break; }
                 }
-                if (!exists) {
+                if (!exists && fs_count < 4) {
                     snprintf(found_fs[fs_count], sizeof(found_fs[fs_count]), "%s", fs);
                     fs_count++;
                 }
@@ -176,32 +226,78 @@ void detect_drive_signature(drive_info_t *drive) {
         return;
     }
 
-    // 2. Check MBR boot signature (0x55AA at offset 510-511)
+    // 2. Check MBR partition table
     int has_mbr = (sector_buf[510] == 0x55 && sector_buf[511] == 0xAA);
+    if (has_mbr) {
+        mbr_entry_info_t mbr_parts[4];
+        int part_count = parse_mbr_entries(drive->fd, mbr_parts, 4);
 
-    // 3. Probe direct whole-disk filesystems (unpartitioned or MBR offset 0)
-    const char *direct_fs = probe_filesystem_at_offset(drive->fd, 0);
-    if (direct_fs) {
-        if (has_mbr) {
+        char found_fs[4][16];
+        int fs_count = 0;
+
+        for (int p = 0; p < part_count && drive->partition_count < 16; p++) {
+            off_t part_offset = (off_t)mbr_parts[p].start_lba * 512;
+            uint64_t part_size = (uint64_t)mbr_parts[p].sector_count * 512;
+
+            const char *fs = probe_filesystem_at_offset(drive->fd, part_offset);
+
+            char dev_base[64];
+            snprintf(dev_base, sizeof(dev_base), "%.63s", drive->name);
+
+            snprintf(drive->partitions[drive->partition_count].name,
+                     sizeof(drive->partitions[drive->partition_count].name),
+                     "%.48s%d", dev_base, drive->partition_count + 1);
+            drive->partitions[drive->partition_count].size = part_size;
+
+            const char *label = fs;
+            if (!label) {
+                if (mbr_parts[p].type == 0xef) label = "EFI";
+                else if (mbr_parts[p].type == 0x00) label = "ISO9660";
+                else label = "Unknown";
+            }
+
+            snprintf(drive->partitions[drive->partition_count].fs_type,
+                     sizeof(drive->partitions[drive->partition_count].fs_type),
+                     "%s", label);
+
+            drive->partition_count++;
+
+            if (fs) {
+                int exists = 0;
+                for (int k = 0; k < fs_count; k++) {
+                    if (strcmp(found_fs[k], fs) == 0) { exists = 1; break; }
+                }
+                if (!exists && fs_count < 4) {
+                    snprintf(found_fs[fs_count], sizeof(found_fs[fs_count]), "%s", fs);
+                    fs_count++;
+                }
+            }
+        }
+
+        const char *direct_fs = probe_filesystem_at_offset(drive->fd, 0);
+        if (direct_fs) {
             snprintf(drive->signature, sizeof(drive->signature), "MBR + %s", direct_fs);
+        } else if (fs_count > 0) {
+            snprintf(drive->signature, sizeof(drive->signature), "MBR (%d partitions)", drive->partition_count);
         } else {
-            snprintf(drive->signature, sizeof(drive->signature), "%s", direct_fs);
+            snprintf(drive->signature, sizeof(drive->signature), "MBR");
         }
         return;
     }
 
-    // 4. Check ISO9660 (CD001 signature at offset 32768)
+    // 3. Check direct whole-disk filesystems or ISO9660
+    const char *direct_fs = probe_filesystem_at_offset(drive->fd, 0);
+    if (direct_fs) {
+        snprintf(drive->signature, sizeof(drive->signature), "%s", direct_fs);
+        return;
+    }
+
     unsigned char iso_buf[5];
     if (lseek(drive->fd, 32768, SEEK_SET) == 32768 && read(drive->fd, iso_buf, 5) == 5) {
         if (memcmp(iso_buf, "CD001", 5) == 0) {
             snprintf(drive->signature, sizeof(drive->signature), "ISO9660");
             return;
         }
-    }
-
-    if (has_mbr) {
-        snprintf(drive->signature, sizeof(drive->signature), "MBR");
-        return;
     }
 
     snprintf(drive->signature, sizeof(drive->signature), "Raw / Unknown");
@@ -257,7 +353,6 @@ int get_drive_list(drive_info_t drives[], int max_drives) {
     while ((entry = readdir(dir)) != NULL && count < max_drives) {
         if (entry->d_name[0] == '.') continue;
 
-        // Filter out loops, ram disks, and optical drives
         if (strncmp(entry->d_name, "loop", 4) == 0) continue;
         if (strncmp(entry->d_name, "ram", 3) == 0) continue;
         if (strncmp(entry->d_name, "sr", 2) == 0) continue;
@@ -266,9 +361,8 @@ int get_drive_list(drive_info_t drives[], int max_drives) {
         snprintf(path, sizeof(path), "/dev/%s", entry->d_name);
 
         int fd = open(path, O_RDONLY);
-        if (fd < 0) continue; // Skip if currently unreadable/locked
+        if (fd < 0) continue;
 
-        // Safe name copy without format-truncation warnings
         size_t name_len = strlen(entry->d_name);
         if (name_len >= sizeof(drives[count].name)) {
             name_len = sizeof(drives[count].name) - 1;
@@ -276,7 +370,6 @@ int get_drive_list(drive_info_t drives[], int max_drives) {
         memcpy(drives[count].name, entry->d_name, name_len);
         drives[count].name[name_len] = '\0';
 
-        // Safe path copy
         size_t path_len = strlen(path);
         if (path_len >= sizeof(drives[count].path)) {
             path_len = sizeof(drives[count].path) - 1;
@@ -288,10 +381,7 @@ int get_drive_list(drive_info_t drives[], int max_drives) {
         drives[count].fd = fd;
         drives[count].last_search_valid = 0;
 
-        // Fetch Model / Serial string
         get_model_and_serial(entry->d_name, drives[count].model_serial, sizeof(drives[count].model_serial));
-
-        // Auto-detect Partition Table / Filesystem signature
         detect_drive_signature(&drives[count]);
 
         if (ioctl(fd, BLKGETSIZE64, &drives[count].size) < 0) {

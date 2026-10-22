@@ -38,7 +38,7 @@ int main(int argc, char *argv[]) {
     int title_height = 3;
     int help_height = 1; // Frameless bottom line
     int main_height = height - title_height - help_height;
-    int left_width = 32;
+    int left_width = 38;
 
     // Create windows
     WINDOW *win_title = newwin(title_height, width, 0, 0);
@@ -109,7 +109,6 @@ int main(int argc, char *argv[]) {
         }
 
         // --- Selective UI Rendering ---
-        // --- Selective UI Rendering ---
         if (redraw_all) {
             // Render Top Title Box
             wclear(win_title);
@@ -171,15 +170,19 @@ int main(int argc, char *argv[]) {
                 mvwprintw(win_left, r, 1, "%-*s", left_width - 2, "");
             }
 
-            // Calculate how many drive items (2 lines each) fit in the left pane
-            int visible_slots = (main_height - 2) / 2;
-            if (visible_slots < 1) visible_slots = 1;
-
             // Adjust scroll offset to keep selected drive in view
             if (selected_drive < scroll_offset) {
                 scroll_offset = selected_drive;
-            } else if (selected_drive >= scroll_offset + visible_slots) {
-                scroll_offset = selected_drive - visible_slots + 1;
+            } else if (selected_drive > scroll_offset) {
+                int lines_needed = 0;
+                int interior_rows = main_height - 2;
+                for (int i = scroll_offset; i <= selected_drive && i < drive_count; i++) {
+                    lines_needed += 2 + drives[i].partition_count;
+                }
+                while (lines_needed > interior_rows && scroll_offset < selected_drive) {
+                    lines_needed -= (2 + drives[scroll_offset].partition_count);
+                    scroll_offset++;
+                }
             }
 
             // Top "More" indicator if items exist above view
@@ -188,7 +191,6 @@ int main(int argc, char *argv[]) {
                 mvwprintw(win_left, 0, 11, "(More ^)");
                 wattroff(win_left, COLOR_PAIR(CP_TITLE));
             } else {
-                // Clear top border title area if no indicator
                 mvwprintw(win_left, 0, 11, "         ");
             }
 
@@ -196,41 +198,73 @@ int main(int argc, char *argv[]) {
                 mvwprintw(win_left, 2, 2, "No drives found.");
             } else {
                 int current_row = 1;
-                for (int i = scroll_offset; i < drive_count && (current_row + 1 < main_height - 1); i++) {
-                    if (i == selected_drive) {
+                int last_visible_drive = scroll_offset;
+                int inner_w = left_width - 2;
+
+                for (int i = scroll_offset; i < drive_count && (current_row < main_height - 1); i++) {
+                    last_visible_drive = i;
+                    int is_selected = (i == selected_drive);
+
+                    if (is_selected) {
                         wattron(win_left, A_REVERSE);
                     }
 
                     // Line 1: Device Name & Capacity (e.g. sdb (1.8GB))
                     char size_buf[32];
                     format_compact_size(drives[i].size, size_buf, sizeof(size_buf));
-                    char line1_buf[64];
-                    snprintf(line1_buf, sizeof(line1_buf), "%s (%s)", drives[i].name, size_buf);
-                    mvwprintw(win_left, current_row, 1, " %-29s", line1_buf);
+                    char line1_buf[128];
+                    snprintf(line1_buf, sizeof(line1_buf), " %s (%s)", drives[i].name, size_buf);
+                    mvwprintw(win_left, current_row, 1, "%-*s", inner_w, line1_buf);
                     current_row++;
 
-                    // Line 2: Model / Serial (Safely truncated to prevent border overlap/wrapping)
+                    // Line 2: Model / Serial
                     if (current_row < main_height - 1) {
-                        int max_len = left_width - 3; // Max interior columns
                         char display_buf[128];
-                        snprintf(display_buf, sizeof(display_buf), "%s", drives[i].model_serial);
+                        snprintf(display_buf, sizeof(display_buf), " %s", drives[i].model_serial);
 
-                        if ((int)strlen(display_buf) > max_len) {
-                            display_buf[max_len - 3] = '\0';
+                        if ((int)strlen(display_buf) > inner_w) {
+                            display_buf[inner_w - 3] = '\0';
                             strcat(display_buf, "...");
                         }
 
-                        mvwprintw(win_left, current_row, 1, " %-*s", max_len, display_buf);
+                        mvwprintw(win_left, current_row, 1, "%-*s", inner_w, display_buf);
                         current_row++;
                     }
 
-                    if (i == selected_drive) {
+                    // Lines 3+: Partition Tree Nodes with precise column-based padding
+                    for (int p = 0; p < drives[i].partition_count && (current_row < main_height - 1); p++) {
+                        char part_cap[32];
+                        format_compact_size(drives[i].partitions[p].size, part_cap, sizeof(part_cap));
+
+                        char var_part[128];
+                        snprintf(var_part, sizeof(var_part), "%s [%s] (%s)",
+                                 drives[i].partitions[p].name,
+                                 drives[i].partitions[p].fs_type,
+                                 part_cap);
+
+                        int prefix_cols = 5; // "  └─ " takes 5 display columns
+                        int total_cols = prefix_cols + (int)strlen(var_part);
+                        int padding = inner_w - total_cols;
+                        if (padding < 0) {
+                            int allowed_len = (int)strlen(var_part) + padding;
+                            if (allowed_len > 3) {
+                                var_part[allowed_len - 3] = '\0';
+                                strcat(var_part, "...");
+                            }
+                            padding = 0;
+                        }
+
+                        mvwprintw(win_left, current_row, 1, "  └─ %s%*s", var_part, padding, "");
+                        current_row++;
+                    }
+
+                    if (is_selected) {
                         wattroff(win_left, A_REVERSE);
                     }
                 }
 
                 // Bottom "More" indicator if items exist below view
-                if (scroll_offset + visible_slots < drive_count) {
+                if (last_visible_drive < drive_count - 1) {
                     wattron(win_left, COLOR_PAIR(CP_TITLE));
                     mvwprintw(win_left, main_height - 1, left_width - 10, "(More v)");
                     wattroff(win_left, COLOR_PAIR(CP_TITLE));
@@ -347,7 +381,7 @@ int main(int argc, char *argv[]) {
                     selected_drive++;
                     redraw_left = 1;
                     redraw_right = 1;
-                    redraw_borders =1;
+                    redraw_borders = 1;
                 }
                 break;
 
@@ -356,7 +390,7 @@ int main(int argc, char *argv[]) {
                     selected_drive--;
                     redraw_left = 1;
                     redraw_right = 1;
-                    redraw_borders =1;
+                    redraw_borders = 1;
                 }
                 break;
 
