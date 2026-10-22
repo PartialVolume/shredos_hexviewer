@@ -347,6 +347,7 @@ int main(int argc, char *argv[]) {
                     selected_drive++;
                     redraw_left = 1;
                     redraw_right = 1;
+                    redraw_borders =1;
                 }
                 break;
 
@@ -355,6 +356,7 @@ int main(int argc, char *argv[]) {
                     selected_drive--;
                     redraw_left = 1;
                     redraw_right = 1;
+                    redraw_borders =1;
                 }
                 break;
 
