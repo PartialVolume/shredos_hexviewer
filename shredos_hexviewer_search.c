@@ -1,5 +1,19 @@
 #include "shredos_hexviewer.h"
 
+#define SEARCH_BUF_SIZE (16 * 1024 * 1024) // 16MB high-throughput buffer matching nwipe
+
+static void format_speed(double bytes_per_sec, char *buf, size_t size) {
+    if (bytes_per_sec >= 1000.0 * 1000.0 * 1000.0) {
+        snprintf(buf, size, "%.1f GB/s", bytes_per_sec / (1000.0 * 1000.0 * 1000.0));
+    } else if (bytes_per_sec >= 1000.0 * 1000.0) {
+        snprintf(buf, size, "%.1f MB/s", bytes_per_sec / (1000.0 * 1000.0));
+    } else if (bytes_per_sec >= 1000.0) {
+        snprintf(buf, size, "%.1f KB/s", bytes_per_sec / 1000.0);
+    } else {
+        snprintf(buf, size, "%.1f B/s", bytes_per_sec);
+    }
+}
+
 off_t handle_goto_popup(drive_info_t *drive, int bytes_per_row) {
     (void)bytes_per_row;
     int p_height = 10;
@@ -362,17 +376,25 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
     double target_mb = (double)target_bytes / (1000.0 * 1000.0);
     if (target_mb < 0.1) target_mb = 0.1;
 
-    size_t sector_size = 512;
+    size_t chunk_buf_size = SEARCH_BUF_SIZE; // 16MB
     int found = 0;
     int cancelled = 0;
     off_t found_offset = start_offset;
-    unsigned char *sector_buf = malloc(sector_size);
-    if (!sector_buf) {
-        show_message_popup("Error", "Memory allocation failed for search buffer.");
+
+    unsigned char *io_buf = malloc(chunk_buf_size);
+    if (!io_buf) {
+        show_message_popup("Error", "Memory allocation failed for high-throughput search buffer.");
         return drive->offset;
     }
 
-    int prog_h = 8;
+    unsigned char *search_buf = malloc(chunk_buf_size + 128);
+    if (!search_buf) {
+        free(io_buf);
+        show_message_popup("Error", "Memory allocation failed for search boundary buffer.");
+        return drive->offset;
+    }
+
+    int prog_h = 9;
     int prog_w = 64;
     int prog_y = (LINES - prog_h) / 2;
     int prog_x = (COLS - prog_w) / 2;
@@ -382,60 +404,223 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
 
     box(prog_win, 0, 0);
     wattron(prog_win, COLOR_PAIR(CP_TITLE) | A_BOLD);
-    mvwprintw(prog_win, 0, 2, is_full_scan ? " Full Sequential Search " : " 1000-Chunk Scatter Search ");
+    mvwprintw(prog_win, 0, 2, is_full_scan ? " Full Sequential Search (Buffered) " : " 1000-Chunk Scatter Search ");
     wattroff(prog_win, COLOR_PAIR(CP_TITLE) | A_BOLD);
     mvwprintw(prog_win, 2, 3, "Progress:   0%% complete");
     mvwprintw(prog_win, 3, 3, "Checked:    0.0MB / %.1fMB", target_mb);
-    mvwprintw(prog_win, 5, 3, "Press ESC to cancel search");
+    mvwprintw(prog_win, 4, 3, "Speed:      0.0 B/s");
+    mvwprintw(prog_win, 6, 3, "Press ESC to cancel search");
     wrefresh(prog_win);
 
-    struct timespec last_check;
-    clock_gettime(CLOCK_MONOTONIC, &last_check);
+    struct timespec last_speed_update;
+    clock_gettime(CLOCK_MONOTONIC, &last_speed_update);
 
-    if (is_full_scan) {
-        unsigned long long total_sectors = (target_bytes + sector_size - 1) / sector_size;
-        if (total_sectors == 0) total_sectors = 1;
+    unsigned long long bytes_since_last_update = 0;
+    char speed_buf[32] = "0.0 B/s";
+
+    if (is_full_scan && !is_find_next) {
+        // --- HIGH-SPEED OPTIMIZED 16MB FAST PATH WITH HORSPOOL & MEMCMP ---
+        unsigned long long bytes_remaining = target_bytes;
+        off_t current_offset = start_offset;
+        unsigned long long total_bytes_read = 0;
 
         unsigned char history[64] = {0};
         int history_len = 0;
-        unsigned long long total_bytes_read = 0;
 
-        for (unsigned long long i = 0; i < total_sectors && !found && !cancelled; i++) {
+        while (bytes_remaining > 0 && !found && !cancelled) {
+            size_t to_read = (bytes_remaining > chunk_buf_size) ? chunk_buf_size : (size_t)bytes_remaining;
+            if (current_offset + (off_t)to_read > drive->size) {
+                to_read = (size_t)(drive->size - current_offset);
+            }
+            if (to_read == 0) break;
+
+            ssize_t n = safe_read(drive->fd, io_buf, to_read, drive->name, current_offset);
+            if (n <= 0) {
+                cancelled = 1;
+                break;
+            }
+
+            int effective_history_len = history_len;
+            if (effective_history_len > (int)n) effective_history_len = (int)n;
+
+            memcpy(search_buf, history, effective_history_len);
+            memcpy(search_buf + effective_history_len, io_buf, n);
+            int total_len = effective_history_len + (int)n;
+
+            if (search_type == SEARCH_NON_ZERO) {
+                for (int idx = 0; idx < total_len; idx++) {
+                    off_t byte_off = current_offset - effective_history_len + idx;
+                    if (byte_off >= 0 && search_buf[idx] != 0x00) {
+                        found = 1;
+                        found_offset = byte_off;
+                        break;
+                    }
+                }
+            } else if (search_type == SEARCH_NON_FF) {
+                for (int idx = 0; idx < total_len; idx++) {
+                    off_t byte_off = current_offset - effective_history_len + idx;
+                    if (byte_off >= 0 && search_buf[idx] != 0xFF) {
+                        found = 1;
+                        found_offset = byte_off;
+                        break;
+                    }
+                }
+            } else if (search_type == SEARCH_ASCII_PATTERN || search_type == SEARCH_ASCII_PATTERN_CI) {
+                int case_insensitive = (search_type == SEARCH_ASCII_PATTERN_CI);
+
+                // Precompute Boyer-Moore-Horspool bad-character shift table
+                int bad_char_skip[256];
+                for (int i = 0; i < 256; i++) {
+                    bad_char_skip[i] = pat_len;
+                }
+                for (int i = 0; i < pat_len - 1; i++) {
+                    unsigned char c = ascii_pattern[i];
+                    bad_char_skip[c] = pat_len - 1 - i;
+                    if (case_insensitive) {
+                        bad_char_skip[tolower(c)] = pat_len - 1 - i;
+                        bad_char_skip[toupper(c)] = pat_len - 1 - i;
+                    }
+                }
+
+                int idx = 0;
+                while (idx <= total_len - pat_len) {
+                    off_t byte_off = current_offset - effective_history_len + idx;
+
+                    // Match check from right to left (Horspool optimization)
+                    int match = 1;
+                    for (int p = pat_len - 1; p >= 0; p--) {
+                        unsigned char disk_b = search_buf[idx + p];
+                        unsigned char pat_b = ascii_pattern[p];
+                        if (case_insensitive) {
+                            if (tolower(disk_b) != pat_b) {
+                                match = 0;
+                                break;
+                            }
+                        } else {
+                            if (disk_b != pat_b) {
+                                match = 0;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (match) {
+                        if (byte_off >= 0) {
+                            found = 1;
+                            found_offset = byte_off;
+                            break;
+                        }
+                    }
+
+                    // Shift window forward using bad-character table (skips non-matching blocks instantly)
+                    unsigned char last_char = search_buf[idx + pat_len - 1];
+                    idx += bad_char_skip[case_insensitive ? tolower(last_char) : last_char];
+                }
+            } else if (search_type == SEARCH_HEX_PATTERN) {
+                int has_first_val = !hex_pattern[0].is_wildcard;
+                unsigned char first_val = has_first_val ? hex_pattern[0].value : 0;
+                int max_idx = total_len - pat_len + 1;
+                for (int idx = 0; idx < max_idx; idx++) {
+                    off_t byte_off = current_offset - effective_history_len + idx;
+                    if (byte_off < 0) continue;
+
+                    if (!has_first_val || search_buf[idx] == first_val) {
+                        int p_match = 1;
+                        int start_p = has_first_val ? 1 : 0;
+                        for (int p = start_p; p < pat_len; p++) {
+                            if (!hex_pattern[p].is_wildcard) {
+                                if (search_buf[idx + p] != hex_pattern[p].value) {
+                                    p_match = 0;
+                                    break;
+                                }
+                            }
+                        }
+                        if (p_match) {
+                            found = 1;
+                            found_offset = byte_off;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (search_type == SEARCH_HEX_PATTERN || search_type == SEARCH_ASCII_PATTERN || search_type == SEARCH_ASCII_PATTERN_CI) {
+                int keep = pat_len - 1;
+                if (keep > n) keep = n;
+                if (keep > 0) {
+                    memcpy(history, io_buf + n - keep, keep);
+                    history_len = keep;
+                } else {
+                    history_len = 0;
+                }
+            }
+
+            total_bytes_read += n;
+            bytes_since_last_update += n;
+            current_offset += n;
+            bytes_remaining -= n;
+
             struct timespec now;
             clock_gettime(CLOCK_MONOTONIC, &now);
-            long elapsed_ms = (now.tv_sec - last_check.tv_sec) * 1000 + (now.tv_nsec - last_check.tv_nsec) / 1000000;
-            if (elapsed_ms >= 250) {
-                last_check = now;
+            double interval_sec = (now.tv_sec - last_speed_update.tv_sec) + (now.tv_nsec - last_speed_update.tv_nsec) / 1e9;
+
+            if (interval_sec >= 0.25) {
                 int ch = wgetch(prog_win);
                 if (ch == 27 || ch == 'q' || ch == 'Q') {
                     cancelled = 1;
                     break;
                 }
+
+                if (interval_sec > 0.0) {
+                    double current_speed = (double)bytes_since_last_update / interval_sec;
+                    format_speed(current_speed, speed_buf, sizeof(speed_buf));
+                }
+                last_speed_update = now;
+                bytes_since_last_update = 0;
+
+                int percent = (int)((total_bytes_read * 100) / target_bytes);
+                if (percent > 100) percent = 100;
+                double checked_mb = (double)total_bytes_read / (1000.0 * 1000.0);
+
+                mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
+                mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
+                mvwprintw(prog_win, 4, 13, "%-15s", speed_buf);
+                wrefresh(prog_win);
             }
+        }
+    } else {
+        // --- STANDARD GUARDED PATH FOR SCATTER & FIND-NEXT SCANS ---
+        unsigned long long bytes_remaining = target_bytes;
+        off_t current_offset = start_offset;
+        unsigned long long total_bytes_read = 0;
 
-            off_t check_offset = (off_t)(i * sector_size);
-            if (check_offset >= drive->size) break;
+        unsigned char history[64] = {0};
+        int history_len = 0;
 
-            size_t to_read = sector_size;
-            if (check_offset + (off_t)to_read > drive->size) {
-                to_read = (size_t)(drive->size - check_offset);
+        while (bytes_remaining > 0 && !found && !cancelled) {
+            if (current_offset >= drive->size) break;
+
+            size_t to_read = (bytes_remaining > chunk_buf_size) ? chunk_buf_size : (size_t)bytes_remaining;
+            if (current_offset + (off_t)to_read > drive->size) {
+                to_read = (size_t)(drive->size - current_offset);
             }
             if (to_read == 0) break;
 
-            ssize_t n = safe_read(drive->fd, sector_buf, to_read, drive->name, check_offset);
-            if (n == -1) {
+            ssize_t n = safe_read(drive->fd, io_buf, to_read, drive->name, current_offset);
+            if (n <= 0) {
                 cancelled = 1;
                 break;
             }
-            if (n == 0) break;
 
-            unsigned char search_buf[512 + 64];
-            memcpy(search_buf, history, history_len);
-            memcpy(search_buf + history_len, sector_buf, n);
-            int total_len = history_len + (int)n;
+            int effective_history_len = history_len;
+            if (effective_history_len > (int)n) effective_history_len = (int)n;
+
+            memcpy(search_buf, history, effective_history_len);
+            memcpy(search_buf + effective_history_len, io_buf, n);
+            int total_len = effective_history_len + (int)n;
 
             for (int idx = 0; idx < total_len; idx++) {
-                off_t current_byte_offset = check_offset - history_len + idx;
+                off_t current_byte_offset = current_offset - effective_history_len + idx;
                 if (current_byte_offset < 0) continue;
                 if (current_byte_offset >= drive->size) break;
 
@@ -496,7 +681,7 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
                 int keep = pat_len - 1;
                 if (keep > n) keep = n;
                 if (keep > 0) {
-                    memcpy(history, sector_buf + n - keep, keep);
+                    memcpy(history, io_buf + n - keep, keep);
                     history_len = keep;
                 } else {
                     history_len = 0;
@@ -504,195 +689,42 @@ off_t execute_search(drive_info_t *drive, int bytes_per_row, search_type_t searc
             }
 
             total_bytes_read += n;
-            int percent = (int)((total_bytes_read * 100) / target_bytes);
-            if (percent > 100) percent = 100;
-            double checked_mb = (double)total_bytes_read / (1000.0 * 1000.0);
+            bytes_since_last_update += n;
+            current_offset += n;
+            bytes_remaining -= n;
 
-            mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
-            mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
-            wrefresh(prog_win);
-        }
-    } else {
-        int num_chunks = 1000;
-        unsigned long long total_sectors = (target_bytes + sector_size - 1) / sector_size;
-        if (total_sectors < (unsigned long long)num_chunks) {
-            num_chunks = (int)total_sectors;
-            if (num_chunks < 1) num_chunks = 1;
-        }
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            double interval_sec = (now.tv_sec - last_speed_update.tv_sec) + (now.tv_nsec - last_speed_update.tv_nsec) / 1e9;
 
-        typedef struct {
-            unsigned long long start_sec;
-            unsigned long long end_sec;
-        } chunk_range_t;
-
-        chunk_range_t *chunks = malloc(num_chunks * sizeof(chunk_range_t));
-        if (!chunks) {
-            free(sector_buf);
-            delwin(prog_win);
-            touchwin(stdscr);
-            show_message_popup("Error", "Memory allocation failed for chunks.");
-            return drive->offset;
-        }
-
-        for (int i = 0; i < num_chunks; i++) {
-            chunks[i].start_sec = ((unsigned long long)i * total_sectors) / num_chunks;
-            chunks[i].end_sec = ((unsigned long long)(i + 1) * total_sectors) / num_chunks;
-        }
-
-        int *indices = malloc(num_chunks * sizeof(int));
-        if (!indices) {
-            free(chunks);
-            free(sector_buf);
-            delwin(prog_win);
-            touchwin(stdscr);
-            show_message_popup("Error", "Memory allocation failed for chunk indices.");
-            return drive->offset;
-        }
-        for (int i = 0; i < num_chunks; i++) {
-            indices[i] = i;
-        }
-
-        for (int i = num_chunks - 1; i > 0; i--) {
-            unsigned long long r1 = ((unsigned long long)rand() << 30) ^ rand();
-            int j = (int)(r1 % (i + 1));
-            int temp = indices[i];
-            indices[i] = indices[j];
-            indices[j] = temp;
-        }
-
-        unsigned long long total_bytes_read = 0;
-
-        for (int idx = 0; idx < num_chunks && !found && !cancelled; idx++) {
-            int c_idx = indices[idx];
-            unsigned long long start_sec = chunks[c_idx].start_sec;
-            unsigned long long end_sec = chunks[c_idx].end_sec;
-
-            unsigned char history[64] = {0};
-            int history_len = 0;
-
-            for (unsigned long long sec = start_sec; sec < end_sec && !found && !cancelled; sec++) {
-                if (total_bytes_read >= target_bytes) break;
-
-                struct timespec now;
-                clock_gettime(CLOCK_MONOTONIC, &now);
-                long elapsed_ms = (now.tv_sec - last_check.tv_sec) * 1000 + (now.tv_nsec - last_check.tv_nsec) / 1000000;
-                if (elapsed_ms >= 250) {
-                    last_check = now;
-                    int ch = wgetch(prog_win);
-                    if (ch == 27 || ch == 'q' || ch == 'Q') {
-                        cancelled = 1;
-                        break;
-                    }
-                }
-
-                off_t check_offset = (off_t)(sec * sector_size);
-                if (check_offset >= drive->size) break;
-
-                size_t to_read = sector_size;
-                if (check_offset + (off_t)to_read > drive->size) {
-                    to_read = (size_t)(drive->size - check_offset);
-                }
-                if (to_read == 0) break;
-
-                ssize_t n = safe_read(drive->fd, sector_buf, to_read, drive->name, check_offset);
-                if (n == -1) {
+            if (interval_sec >= 0.25) {
+                int ch = wgetch(prog_win);
+                if (ch == 27 || ch == 'q' || ch == 'Q') {
                     cancelled = 1;
                     break;
                 }
-                if (n == 0) break;
 
-                unsigned char search_buf[512 + 64];
-                memcpy(search_buf, history, history_len);
-                memcpy(search_buf + history_len, sector_buf, n);
-                int total_len = history_len + (int)n;
-
-                for (int s_idx = 0; s_idx < total_len; s_idx++) {
-                    off_t current_byte_offset = check_offset - history_len + s_idx;
-                    if (current_byte_offset < 0) continue;
-                    if (current_byte_offset >= drive->size) break;
-
-                    if (is_find_next && current_byte_offset <= drive->last_found_offset) {
-                        continue;
-                    }
-
-                    unsigned char b = search_buf[s_idx];
-                    int matched = 0;
-
-                    if (search_type == SEARCH_NON_ZERO) {
-                        if (b != 0x00) { matched = 1; found_offset = current_byte_offset; }
-                    } else if (search_type == SEARCH_NON_FF) {
-                        if (b != 0xFF) { matched = 1; found_offset = current_byte_offset; }
-                    } else if (search_type == SEARCH_HEX_PATTERN) {
-                        if (s_idx + pat_len <= total_len) {
-                            int p_match = 1;
-                            for (int p = 0; p < pat_len; p++) {
-                                if (!hex_pattern[p].is_wildcard) {
-                                    if (search_buf[s_idx + p] != hex_pattern[p].value) {
-                                        p_match = 0;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (p_match) {
-                                matched = 1;
-                                found_offset = current_byte_offset;
-                            }
-                        }
-                    } else if (search_type == SEARCH_ASCII_PATTERN || search_type == SEARCH_ASCII_PATTERN_CI) {
-                        if (s_idx + pat_len <= total_len) {
-                            int p_match = 1;
-                            for (int p = 0; p < pat_len; p++) {
-                                unsigned char disk_b = search_buf[s_idx + p];
-                                if (search_type == SEARCH_ASCII_PATTERN_CI) {
-                                    disk_b = (unsigned char)tolower(disk_b);
-                                }
-                                if (disk_b != ascii_pattern[p]) {
-                                    p_match = 0;
-                                    break;
-                                }
-                            }
-                            if (p_match) {
-                                matched = 1;
-                                found_offset = current_byte_offset;
-                            }
-                        }
-                    }
-
-                    if (matched) {
-                        found = 1;
-                        break;
-                    }
+                if (interval_sec > 0.0) {
+                    double current_speed = (double)bytes_since_last_update / interval_sec;
+                    format_speed(current_speed, speed_buf, sizeof(speed_buf));
                 }
+                last_speed_update = now;
+                bytes_since_last_update = 0;
 
-                if (search_type == SEARCH_HEX_PATTERN || search_type == SEARCH_ASCII_PATTERN || search_type == SEARCH_ASCII_PATTERN_CI) {
-                    int keep = pat_len - 1;
-                    if (keep > n) keep = n;
-                    if (keep > 0) {
-                        memcpy(history, sector_buf + n - keep, keep);
-                        history_len = keep;
-                    } else {
-                        history_len = 0;
-                    }
-                }
-
-                total_bytes_read += n;
                 int percent = (int)((total_bytes_read * 100) / target_bytes);
                 if (percent > 100) percent = 100;
                 double checked_mb = (double)total_bytes_read / (1000.0 * 1000.0);
 
                 mvwprintw(prog_win, 2, 13, "%3d%% complete", percent);
                 mvwprintw(prog_win, 3, 13, "%.1fMB / %.1fMB", checked_mb, target_mb);
+                mvwprintw(prog_win, 4, 13, "%-15s", speed_buf);
                 wrefresh(prog_win);
             }
-
-            if (total_bytes_read >= target_bytes) break;
         }
-
-        free(indices);
-        free(chunks);
     }
 
-    free(sector_buf);
+    free(search_buf);
+    free(io_buf);
     delwin(prog_win);
     touchwin(stdscr);
 
