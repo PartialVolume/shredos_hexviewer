@@ -1,4 +1,99 @@
 #include "shredos_hexviewer.h"
+#include <dirent.h>
+
+static int is_valid_string(const char *str, size_t max_len) {
+    if (!str || strlen(str) == 0) return 0;
+    size_t len = strlen(str);
+    if (len >= max_len) return 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)str[i];
+        if (c < 32 || c > 126 || c == '^' || c == '`' || c == '~') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int get_serial_from_by_id(const char *dev_name, char *serial_out, size_t serial_max) {
+    DIR *dir = opendir("/dev/disk/by-id");
+    if (!dir) return -1;
+
+    struct dirent *entry;
+    char best_serial[64] = {0};
+    int best_priority = -1; // 2 for ata-, 1 for nvme-, 0 for usb-
+
+    char target_suffix[64];
+    snprintf(target_suffix, sizeof(target_suffix), "/%s", dev_name);
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+        if (strstr(entry->d_name, "-part") != NULL) continue;
+        if (strncmp(entry->d_name, "wwn-", 4) == 0) continue;
+
+        char symlink_path[MAX_PATH];
+        snprintf(symlink_path, sizeof(symlink_path), "/dev/disk/by-id/%s", entry->d_name);
+
+        char link_target[MAX_PATH];
+        ssize_t len = readlink(symlink_path, link_target, sizeof(link_target) - 1);
+        if (len < 0) continue;
+        link_target[len] = '\0';
+
+        size_t t_len = strlen(link_target);
+        size_t s_len = strlen(target_suffix);
+        if (t_len >= s_len && strcmp(link_target + t_len - s_len, target_suffix) == 0) {
+            int priority = -1;
+            if (strncmp(entry->d_name, "ata-", 4) == 0) {
+                priority = 2; // Highest priority: bypasses USB bridge dummy serials
+            } else if (strncmp(entry->d_name, "nvme-", 5) == 0 && strstr(entry->d_name, "nvme-nvme.") == NULL) {
+                priority = 1;
+            } else if (strncmp(entry->d_name, "usb-", 4) == 0) {
+                priority = 0; // Lowest priority
+            }
+
+            if (priority >= best_priority) {
+                char working_name[256];
+                snprintf(working_name, sizeof(working_name), "%s", entry->d_name);
+
+                char *serial_candidate = working_name;
+                if (strncmp(serial_candidate, "ata-", 4) == 0) serial_candidate += 4;
+                else if (strncmp(serial_candidate, "nvme-", 5) == 0) serial_candidate += 5;
+                else if (strncmp(serial_candidate, "usb-", 4) == 0) serial_candidate += 4;
+
+                char *last_sep = strrchr(serial_candidate, '_');
+                if (!last_sep) {
+                    last_sep = strrchr(serial_candidate, '-');
+                }
+
+                if (last_sep) {
+                    char *candidate_serial = last_sep + 1;
+                    // Reject port/LUN indicators containing colons (e.g. 0:0 in UDisk-0:0)
+                    if (strchr(candidate_serial, ':') != NULL) {
+                        continue;
+                    }
+                    if (is_valid_string(candidate_serial, serial_max) && strcmp(candidate_serial, "UnknownSerial") != 0) {
+                        snprintf(best_serial, sizeof(best_serial), "%.63s", candidate_serial);
+                        best_priority = priority;
+                    }
+                } else {
+                    if (strchr(serial_candidate, ':') != NULL) {
+                        continue;
+                    }
+                    if (is_valid_string(serial_candidate, serial_max)) {
+                        snprintf(best_serial, sizeof(best_serial), "%.63s", serial_candidate);
+                        best_priority = priority;
+                    }
+                }
+            }
+        }
+    }
+    closedir(dir);
+
+    if (best_priority >= 0 && strlen(best_serial) > 0) {
+        snprintf(serial_out, serial_max, "%s", best_serial);
+        return 0;
+    }
+    return -1;
+}
 
 void get_model_and_serial(const char *dev_name, char *dest, size_t max_len, int quiet) {
     char model[64] = "UnknownModel";
@@ -6,7 +101,15 @@ void get_model_and_serial(const char *dev_name, char *dest, size_t max_len, int 
     char path[MAX_PATH];
     FILE *f;
 
-    // Retrieve Model from sysfs
+    // 1. Try retrieving serial from /dev/disk/by-id/ with ata-/nvme- prioritization and colon filtering
+    char by_id_serial[64] = {0};
+    if (get_serial_from_by_id(dev_name, by_id_serial, sizeof(by_id_serial)) == 0) {
+        if (is_valid_string(by_id_serial, sizeof(by_id_serial))) {
+            snprintf(serial, sizeof(serial), "%s", by_id_serial);
+        }
+    }
+
+    // 2. Retrieve Model from sysfs
     snprintf(path, sizeof(path), "/sys/block/%s/device/model", dev_name);
     f = fopen(path, "r");
     if (f) {
@@ -25,23 +128,32 @@ void get_model_and_serial(const char *dev_name, char *dest, size_t max_len, int 
         }
     }
 
-    // Retrieve Serial from sysfs
-    snprintf(path, sizeof(path), "/sys/block/%s/device/serial", dev_name);
-    f = fopen(path, "r");
-    if (f) {
-        if (fgets(serial, sizeof(serial), f)) {
-            serial[strcspn(serial, "\r\n")] = 0;
-        }
-        fclose(f);
-    } else {
-        snprintf(path, sizeof(path), "/sys/block/%s/serial", dev_name);
+    // 3. Fallback to sysfs serial if still unknown
+    if (strcmp(serial, "UnknownSerial") == 0 || !is_valid_string(serial, sizeof(serial))) {
+        snprintf(path, sizeof(path), "/sys/block/%s/device/serial", dev_name);
         f = fopen(path, "r");
         if (f) {
             if (fgets(serial, sizeof(serial), f)) {
                 serial[strcspn(serial, "\r\n")] = 0;
             }
             fclose(f);
+        } else {
+            snprintf(path, sizeof(path), "/sys/block/%s/serial", dev_name);
+            f = fopen(path, "r");
+            if (f) {
+                if (fgets(serial, sizeof(serial), f)) {
+                    serial[strcspn(serial, "\r\n")] = 0;
+                }
+                fclose(f);
+            }
         }
+    }
+
+    if (!is_valid_string(model, sizeof(model))) {
+        strcpy(model, "UnknownModel");
+    }
+    if (!is_valid_string(serial, sizeof(serial))) {
+        strcpy(serial, "UnknownSerial");
     }
 
     // Trim trailing whitespace
