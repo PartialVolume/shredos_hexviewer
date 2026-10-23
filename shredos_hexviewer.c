@@ -129,7 +129,7 @@ int main(int argc, char *argv[]) {
             wattroff(win_title, COLOR_PAIR(CP_BORDER));
 
             wattron(win_title, COLOR_PAIR(CP_TITLE) | A_BOLD);
-            mvwprintw(win_title, 1, 2, " shredos_hexviewer v1.7");
+            mvwprintw(win_title, 1, 2, " shredos_hexviewer v1.8");
             wattroff(win_title, COLOR_PAIR(CP_TITLE) | A_BOLD);
             wrefresh(win_title);
 
